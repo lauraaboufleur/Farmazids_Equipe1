@@ -1,10 +1,21 @@
 #!/bin/bash
-# Roda as coletas das farmácias na EC2 e envia os resultados para o S3.
+# Roda as coletas das farmácias na EC2, envia os resultados para o S3
+# e desliga a máquina no final (a menos que esteja em modo manutenção).
 set -e
 
 REPO=/home/ubuntu/Farmazids_Equipe1
 BUCKET=farmazids-t1-equipe1
 DATA=$(date +%Y-%m-%d)
+
+desligar() {
+    if [ -f /home/ubuntu/MANUTENCAO ]; then
+        echo "=== Modo manutenção: a máquina NÃO vai desligar ==="
+    else
+        echo "=== Desligando a máquina ==="
+        sudo shutdown -h now
+    fi
+}
+trap desligar EXIT
 
 echo "=== Início: $(date) ==="
 
