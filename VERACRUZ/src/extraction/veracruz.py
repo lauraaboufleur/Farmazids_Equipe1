@@ -203,6 +203,9 @@ async def processar_pagina(sessao, semaforo, cache_detalhes, pagina):
     # Busca GTIN-13 e Marca de todos os produtos ao mesmo tempo, mantendo a ordem
     detalhes = await asyncio.gather(*tarefas_detalhes)
  
+ # Libera a memória
+    del soup, blocos_produtos, bloco, texto
+ 
     produtos = []
     for dados, (gtin, marca) in zip(dados_pagina, detalhes):
         produtos.append(
