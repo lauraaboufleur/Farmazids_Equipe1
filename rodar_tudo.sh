@@ -57,9 +57,14 @@ fi
     echo "=== Veracruz: extração ==="
     .venv/bin/python src/extraction/veracruz.py
 
+     echo "=== Veracruz: tratamento ==="
+    .venv/bin/python src/processing/veracruz_processing.py
+
     echo "=== Veracruz: enviando para o S3 ==="
     aws s3 cp produtos_drogaria_veracruz.parquet \
         "s3://$BUCKET/raw/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
+    aws s3 cp "data/processed/veracruz_$DATA.parquet" \
+        "s3://$BUCKET/processed/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
 )
 if [ $? -ne 0 ]; then
     echo "!!! Veracruz FALHOU"
