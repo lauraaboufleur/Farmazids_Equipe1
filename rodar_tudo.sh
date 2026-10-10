@@ -21,19 +21,26 @@ trap desligar EXIT
 
 echo "=== Início: $(date) ==="
 
+cd "$REPO"
+
+# Uma venv só para o projeto todo (cria na primeira vez que rodar)
+if [ ! -d .venv ]; then
+    echo "=== Criando a venv ==="
+    python3 -m venv .venv
+fi
+echo "=== Instalando dependências ==="
+.venv/bin/pip install -q -r requirements.txt
+
 # ---------------- FarmaPonte ----------------
 (
     set -e
-    cd "$REPO/FARMAPONTE"
-    echo "=== FarmaPonte: dependências ==="
-    .venv/bin/pip install -q -r requirements.txt
-    mkdir -p data/raw data/processed
+    cd "$REPO"
 
     echo "=== FarmaPonte: extração ==="
-    .venv/bin/python src/extraction/farmaponte.py
+    .venv/bin/python src/adapters/farmaponte.py
 
     echo "=== FarmaPonte: tratamento ==="
-    .venv/bin/python src/processing/farmaponte.py
+    .venv/bin/python FARMAPONTE/src/processing/farmaponte.py
 
     echo "=== FarmaPonte: enviando para o S3 ==="
     aws s3 cp "data/raw/farmaponte_$DATA.jsonl" \
@@ -49,21 +56,20 @@ fi
 # ---------------- Veracruz ----------------
 (
     set -e
-    cd "$REPO/VERACRUZ"
-    echo "=== Veracruz: dependências ==="
-    .venv/bin/pip install -q -r requirements.txt
+    cd "$REPO"
     rm -f produtos_drogaria_veracruz.parquet
 
     echo "=== Veracruz: extração ==="
-    .venv/bin/python src/extraction/veracruz.py
+    .venv/bin/python src/adapters/veracruz.py
 
-     echo "=== Veracruz: tratamento ==="
-    .venv/bin/python src/processing/veracruz_processing.py
+    echo "=== Veracruz: tratamento ==="
+    .venv/bin/python VERACRUZ/src/processing/veracruz_processing.py \
+        --entrada produtos_drogaria_veracruz.parquet
 
     echo "=== Veracruz: enviando para o S3 ==="
     aws s3 cp produtos_drogaria_veracruz.parquet \
         "s3://$BUCKET/raw/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
-    aws s3 cp "data/processed/veracruz_$DATA.parquet" \
+    aws s3 cp "VERACRUZ/data/processed/veracruz_$DATA.parquet" \
         "s3://$BUCKET/processed/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
 )
 if [ $? -ne 0 ]; then
