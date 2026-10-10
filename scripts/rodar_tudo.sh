@@ -40,7 +40,7 @@ echo "=== Instalando dependências ==="
     .venv/bin/python src/adapters/farmaponte.py
 
     echo "=== FarmaPonte: tratamento ==="
-    .venv/bin/python FARMAPONTE/src/processing/farmaponte.py
+    .venv/bin/python src/core/tratamento_farmaponte.py
 
     echo "=== FarmaPonte: enviando para o S3 ==="
     aws s3 cp "data/raw/farmaponte_$DATA.jsonl" \
@@ -63,13 +63,13 @@ fi
     .venv/bin/python src/adapters/veracruz.py
 
     echo "=== Veracruz: tratamento ==="
-    .venv/bin/python VERACRUZ/src/processing/veracruz_processing.py \
+        .venv/bin/python src/core/tratamento_veracruz.py \
         --entrada produtos_drogaria_veracruz.parquet
 
     echo "=== Veracruz: enviando para o S3 ==="
     aws s3 cp produtos_drogaria_veracruz.parquet \
         "s3://$BUCKET/raw/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
-    aws s3 cp "VERACRUZ/data/processed/veracruz_$DATA.parquet" \
+    aws s3 cp "data/processed/veracruz_$DATA.parquet" \
         "s3://$BUCKET/processed/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
 )
 if [ $? -ne 0 ]; then
