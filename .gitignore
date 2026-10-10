@@ -1,0 +1,21 @@
+# ambiente virtual e cache do python
+.venv/
+__pycache__/
+
+# credenciais
+.env
+
+# dados: ignora tudo dentro das pastas, mas mantém o .gitkeep
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# arquivos gerados pelas coletas, em qualquer lugar
+*.parquet
+*.jsonl
+*.csv
+*.xlsx
+
+# notebooks do jupyter
+*.ipynb
