@@ -62,7 +62,7 @@ fi
     .venv/bin/python src/adapters/veracruz.py
 
     echo "=== Veracruz: tratamento ==="
-        .venv/bin/python src/core/tratamento.py veracruz
+    .venv/bin/python src/core/tratamento.py veracruz
         
     echo "=== Veracruz: enviando para o S3 ==="
     aws s3 cp "data/raw/veracruz_$DATA.jsonl" \
