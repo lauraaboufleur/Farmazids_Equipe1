@@ -32,6 +32,7 @@ PADRAO_EDRONE = re.compile(r"dataItemEdrone\s*=\s*")
 PADRAO_VIRGULA_SOBRANDO = re.compile(r",\s*}")
 PADRAO_TIPO_PRODUTO = re.compile(r'"@type"\s*:\s*"Product"')
 PADRAO_EAN = re.compile(r'"gtin13"\s*:\s*"(\d+)"')
+PADRAO_DISPONIBILIDADE = re.compile(r'"availability"\s*:\s*"([^"]+)"')
 
 STATUS_PARA_REPETIR = (429, 500, 502, 503, 504)
 
@@ -71,6 +72,15 @@ async def baixar(sessao, url):
 # ---------------------------------------------------------------------------
 # 2. Leitura do HTML (CPU) — roda em outros processos, fora do loop assíncrono
 # ---------------------------------------------------------------------------
+def esta_em_estoque(dados_ld):
+    # No ld+json vem "availability": "http://schema.org/InStock" (ou OutOfStock).
+    ofertas = dados_ld.get("offers") or {}
+    if isinstance(ofertas, list):      # às vezes vem uma lista de ofertas
+        ofertas = ofertas[0] if ofertas else {}
+    disponibilidade = ofertas.get("availability")
+    if not disponibilidade:
+        return None                    # a página não informou
+    return disponibilidade.endswith("InStock")
 
 def ler_produto(conteudo, url):
     html = conteudo.decode("utf-8", errors="replace")
@@ -81,7 +91,7 @@ def ler_produto(conteudo, url):
         raise ValueError("window.dataProduct não encontrado")
     produto, _ = json.JSONDecoder().raw_decode(html, encontrado.end())
 
-    # 2. JSON-LD: ld+json (EAN)
+        # 2. JSON-LD: ld+json (EAN e disponibilidade em estoque)
     dados_ld = {}
     for texto in PADRAO_LD.findall(html):
         try:
@@ -93,6 +103,9 @@ def ler_produto(conteudo, url):
                 ean = PADRAO_EAN.search(texto)
                 if ean:
                     dados["gtin13"] = ean.group(1)
+                disponibilidade = PADRAO_DISPONIBILIDADE.search(texto)
+                if disponibilidade:
+                    dados["offers"] = {"availability": disponibilidade.group(1)}
         if isinstance(dados, dict) and dados.get("@type") == "Product":
             dados_ld = dados
 
@@ -124,6 +137,7 @@ def ler_produto(conteudo, url):
         "preco_sem_desconto": edrone.get("total_price"),
         "preco_cartao": produto.get("sale_price"),
         "preco_pix": edrone.get("unit_price"),
+        "em_estoque": esta_em_estoque(dados_ld),
         "desconto": edrone.get("discount"),
         "url": url,
     }
