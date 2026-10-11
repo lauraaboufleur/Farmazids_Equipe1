@@ -57,18 +57,16 @@ fi
 (
     set -e
     cd "$REPO"
-    rm -f produtos_drogaria_veracruz.parquet
 
     echo "=== Veracruz: extração ==="
     .venv/bin/python src/adapters/veracruz.py
 
     echo "=== Veracruz: tratamento ==="
-        .venv/bin/python src/core/tratamento_veracruz.py \
-        --entrada produtos_drogaria_veracruz.parquet
-
+        .venv/bin/python src/core/tratamento.py veracruz
+        
     echo "=== Veracruz: enviando para o S3 ==="
-    aws s3 cp produtos_drogaria_veracruz.parquet \
-        "s3://$BUCKET/raw/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
+    aws s3 cp "data/raw/veracruz_$DATA.jsonl" \
+        "s3://$BUCKET/raw/veracruz/dt=$DATA/veracruz.jsonl" --region us-east-2
     aws s3 cp "data/processed/veracruz_$DATA.parquet" \
         "s3://$BUCKET/processed/veracruz/dt=$DATA/veracruz.parquet" --region us-east-2
 )
