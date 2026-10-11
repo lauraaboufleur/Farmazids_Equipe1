@@ -10,6 +10,7 @@ User=ubuntu
 Environment=PATH=/snap/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
 ExecStartPre=-/usr/bin/timeout 120 /usr/bin/git -C /home/ubuntu/Farmazids_Equipe1 pull
 ExecStart=/bin/bash /home/ubuntu/Farmazids_Equipe1/rodar_tudo.sh
+ExecStart=/bin/bash /home/ubuntu/Farmazids_Equipe1/scripts/rodar_tudo.sh
 TimeoutStartSec=3600
 
 [Install]

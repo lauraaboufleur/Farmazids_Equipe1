@@ -8,7 +8,7 @@ import pandas as pd
  
 FARMACIA = "Drogaria VeraCruz"
  
-# VERACRUZ/ (este arquivo fica em VERACRUZ/src/processing/)
+# raiz do repositório (este arquivo fica em src/core/)
 PASTA_BASE = Path(__file__).resolve().parents[2]
 PASTA_RAW = PASTA_BASE / "data" / "raw"
 PASTA_PROCESSED = PASTA_BASE / "data" / "processed"
