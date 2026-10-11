@@ -33,7 +33,7 @@ PASTA_RAW = PASTA_BASE / "data" / "raw"
 
 COLUNAS = [
     "sku",
-    "gtin13",
+    "ean",
     "nome",
     "marca",
     "categorias",
@@ -44,6 +44,7 @@ COLUNAS = [
     "url",
     "farmacia",
     "data_coleta",
+    "desconto",  # % do selo do site; o tratamento descarta e recalcula
 ]
 
 
@@ -73,6 +74,19 @@ def limpar_preco(texto):
         return float(achado.group())
 
     return None
+
+
+def limpar_desconto(texto):
+    # Converte "-24%" (ou "67%off") em número: 24.
+    if not texto:
+        return None
+
+    achado = re.search(r"\d+(?:[.,]\d+)?", texto)
+    if not achado:
+        return None
+
+    valor = float(achado.group().replace(",", "."))
+    return int(valor) if valor.is_integer() else valor
 
 
 async def baixar(sessao, semaforo, url, timeout):
@@ -142,11 +156,11 @@ def extrair_dados_produto(texto):
     tag_nome = soup.select_one("h1.name")
     nome = tag_nome.get_text(strip=True) if tag_nome else None
 
-    # Categorias: migalhas de pão (breadcrumb) sem o "Início"
+    # Categorias: migalhas de pão (breadcrumb) sem o "Início", como lista
     categorias = [
         li.get_text(strip=True) for li in soup.select("#breadcrumb li:not(.home)")
     ]
-    categorias = " > ".join(c for c in categorias if c) or None
+    categorias = [c for c in categorias if c] or None
 
     # Preços. Buscar só dentro de div.prices evita pegar o preço Pix
     # (<p class="seal-pix ... sale-price">), que também tem a classe
@@ -164,6 +178,10 @@ def extrair_dados_produto(texto):
     )
     preco_pix = limpar_preco(
         tag_preco_pix.get_text(" ", strip=True) if tag_preco_pix else None
+    )
+    tag_desconto = soup.select_one("div.prices span.descont")
+    desconto = limpar_desconto(
+        tag_desconto.get_text(strip=True) if tag_desconto else None
     )
     if preco_pix is None and match_pix_json:
         preco_pix = float(match_pix_json.group(1))
@@ -183,7 +201,7 @@ def extrair_dados_produto(texto):
 
     return {
         "sku": match_sku.group(1) if match_sku else None,
-        "gtin13": match_gtin.group(1) if match_gtin else None,
+        "ean": match_gtin.group(1) if match_gtin else None,
         "nome": nome,
         "marca": match_marca.group(1) if match_marca else None,
         "categorias": categorias,
@@ -191,6 +209,7 @@ def extrair_dados_produto(texto):
         "preco_cartao": preco_cartao,
         "preco_pix": preco_pix,
         "em_estoque": em_estoque,
+        "desconto": desconto,
     }
 
 
@@ -284,7 +303,7 @@ async def processar_pagina(sessao, semaforo, cache_detalhes, pagina):
     if not blocos_produtos:
         return [f"Nenhum produto encontrado na página {pagina}."], []
 
-    data_coleta = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    data_coleta = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     dados_pagina = []
     tarefas_detalhes = []
@@ -327,7 +346,7 @@ async def processar_pagina(sessao, semaforo, cache_detalhes, pagina):
         produtos.append(
             {
                 "sku": sku or det.get("sku"),
-                "gtin13": det.get("gtin13"),
+                "ean": det.get("ean"),
                 "nome": det.get("nome") or nome,
                 "marca": det.get("marca"),
                 "categorias": det.get("categorias"),
@@ -338,6 +357,7 @@ async def processar_pagina(sessao, semaforo, cache_detalhes, pagina):
                 "url": urljoin(URL_BASE, url_produto) if url_produto else None,
                 "farmacia": FARMACIA,
                 "data_coleta": data_coleta,
+                "desconto": det.get("desconto"),
             }
         )
     return [], produtos
@@ -387,7 +407,7 @@ async def main():
                     print("Marca:", prod_dados["marca"])
                     print("Categorias:", prod_dados["categorias"])
                     print("SKU:", prod_dados["sku"])
-                    print("GTIN-13:", prod_dados["gtin13"])
+                    print("EAN:", prod_dados["ean"])
                     print("Preço Sem Desconto:", prod_dados["preco_sem_desconto"])
                     print("Preço Cartão:", prod_dados["preco_cartao"])
                     print("Preço Pix:", prod_dados["preco_pix"])
@@ -403,10 +423,10 @@ async def main():
                 tarefa.cancel()
             for tarefa in cache_detalhes.values():
                 tarefa.cancel()
-            arquivo = salvar_jsonl(lista_produtos)
+            arquivo = salvar_jsonl(lista_produtos) if lista_produtos else None
 
             print("--- Diagnóstico da coleta ---")
-            print("Arquivo salvo:", arquivo)
+            print("Arquivo salvo:", arquivo or "nenhum (0 produtos coletados)")
             print("Produtos coletados:", len(lista_produtos))
             print("Preço vindo da página do produto:", contadores["preco_pagina"])
             print("Preço vindo da listagem (página do produto falhou ou sem preço):", contadores["preco_listagem"])
@@ -415,6 +435,12 @@ async def main():
             print("Páginas do produto que falharam (status/erro -> qtd):", dict(falhas_produto))
             if contadores["pagina_sem_preco"]:
                 print(f"HTML das primeiras páginas sem preço salvo em {PASTA_DEBUG}")
+
+    if not lista_produtos:
+        # Código de saída 1: o rodar_tudo.sh (set -e) para aqui em vez de seguir com arquivo vazio
+        raise SystemExit(
+            "ERRO: nenhum produto coletado (bloqueio do site? veja o diagnóstico acima). Nada foi salvo."
+        )
 
 
 if __name__ == "__main__":
