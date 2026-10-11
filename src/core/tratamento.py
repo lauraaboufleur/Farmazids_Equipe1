@@ -20,6 +20,8 @@ def converter_tipos(df):
     for campo in CAMPOS_PRECO:
         df[campo] = pd.to_numeric(df[campo], errors="coerce")
     df["data_coleta"] = pd.to_datetime(df["data_coleta"])
+    # "boolean" (e não bool) aceita True, False e vazio: a página nem sempre informa o estoque
+    df["em_estoque"] = df["em_estoque"].astype("boolean")
     return df
 
 

@@ -120,6 +120,7 @@ def montar_registros(produto, data_coleta):
             "preco_sem_desconto": preco_ou_vazio(oferta.get("ListPrice")),
             "preco_cartao": preco_ou_vazio(oferta.get("Price")),
             "preco_pix": None,     # a API não informa preço no pix
+            "em_estoque": oferta.get("IsAvailable"),
             "desconto": None,      # o tratamento recalcula o desconto a partir dos preços
             "url": produto.get("link"),
             "data_coleta": data_coleta,
