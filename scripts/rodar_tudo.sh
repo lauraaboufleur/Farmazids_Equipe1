@@ -40,7 +40,7 @@ echo "=== Instalando dependências ==="
     .venv/bin/python src/adapters/farmaponte.py
 
     echo "=== FarmaPonte: tratamento ==="
-    .venv/bin/python src/core/tratamento_farmaponte.py
+    .venv/bin/python src/core/tratamento.py farmaponte
 
     echo "=== FarmaPonte: enviando para o S3 ==="
     aws s3 cp "data/raw/farmaponte_$DATA.jsonl" \
@@ -76,7 +76,27 @@ if [ $? -ne 0 ]; then
     echo "!!! Veracruz FALHOU"
     FALHAS="$FALHAS Veracruz"
 fi
+# ---------------- São João ----------------
+(
+    set -e
+    cd "$REPO"
 
+    echo "=== São João: extração ==="
+    .venv/bin/python src/adapters/sao_joao.py
+
+    echo "=== São João: tratamento ==="
+    .venv/bin/python src/core/tratamento.py sao_joao
+
+    echo "=== São João: enviando para o S3 ==="
+    aws s3 cp "data/raw/sao_joao_$DATA.jsonl" \
+        "s3://$BUCKET/raw/sao_joao/dt=$DATA/sao_joao.jsonl" --region us-east-2
+    aws s3 cp "data/processed/sao_joao_$DATA.parquet" \
+        "s3://$BUCKET/processed/sao_joao/dt=$DATA/sao_joao.parquet" --region us-east-2
+)
+if [ $? -ne 0 ]; then
+    echo "!!! São João FALHOU"
+    FALHAS="$FALHAS SaoJoao"
+fi
 echo "=== Fim: $(date) ==="
 if [ -n "$FALHAS" ]; then
     echo "!!! Falharam:$FALHAS"
