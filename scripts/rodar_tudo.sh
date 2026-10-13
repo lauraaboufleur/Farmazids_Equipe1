@@ -95,6 +95,29 @@ if [ $? -ne 0 ]; then
     echo "!!! São João FALHOU"
     FALHAS="$FALHAS SaoJoao"
 fi
+
+# ---------------- São Paulo ----------------
+(
+    set -e
+    cd "$REPO"
+
+    echo "=== São Paulo: extração ==="
+    .venv/bin/python src/adapters/sao_paulo.py
+
+    echo "=== São Paulo: tratamento ==="
+    .venv/bin/python src/core/tratamento.py sao_paulo
+
+    echo "=== São Paulo: enviando para o S3 ==="
+    aws s3 cp "data/raw/sao_paulo_$DATA.jsonl" \
+        "s3://$BUCKET/raw/sao_paulo/dt=$DATA/sao_paulo.jsonl" --region us-east-2
+    aws s3 cp "data/processed/sao_paulo_$DATA.parquet" \
+        "s3://$BUCKET/processed/sao_paulo/dt=$DATA/sao_paulo.parquet" --region us-east-2
+)
+if [ $? -ne 0 ]; then
+    echo "!!! São Paulo FALHOU"
+    FALHAS="$FALHAS SaoPaulo"
+fi
+
 echo "=== Fim: $(date) ==="
 if [ -n "$FALHAS" ]; then
     echo "!!! Falharam:$FALHAS"
