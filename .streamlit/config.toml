@@ -1,0 +1,31 @@
+# Identidade visual da Farmazids no chatbot (Streamlit).
+# Cores tiradas da marca: roxo #482960 e dourado #C2A05A, sobre fundo creme.
+# Fontes: Cinzel nos títulos (parecida com a da fachada) e Lora no texto,
+# porque a Cinzel só tem letras maiúsculas e fica difícil de ler em parágrafos.
+
+[theme]
+base = "light"
+primaryColor = "#482960"
+backgroundColor = "#FBF8F3"
+secondaryBackgroundColor = "#F2ECF4"
+textColor = "#2E1F3E"
+linkColor = "#482960"
+borderColor = "#E4DAE8"
+baseRadius = "0.6rem"
+font = "Lora:https://fonts.googleapis.com/css2?family=Lora:wght@400;500;600&display=swap, serif"
+headingFont = "Cinzel:https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&display=swap, serif"
+dataframeHeaderBackgroundColor = "#EDE4F1"
+blueBackgroundColor = "#EDE4F1"
+blueTextColor = "#482960"
+
+[theme.sidebar]
+backgroundColor = "#482960"
+secondaryBackgroundColor = "#5A3A75"
+textColor = "#F7F0E3"
+primaryColor = "#C2A05A"
+borderColor = "#6B4C86"
+headingFont = "Cinzel:https://fonts.googleapis.com/css2?family=Cinzel:wght@500;600;700&display=swap, serif"
+
+[client]
+# Esconde o botão "Deploy" e o menu de desenvolvedor para quem usa o chatbot.
+toolbarMode = "minimal"

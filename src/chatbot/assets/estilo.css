@@ -1,0 +1,213 @@
+/* Estilo do chatbot da Farmazids, seguindo o template visual aprovado.
+   As imagens decorativas (--ramo, --nuvens, --ondas, --pessoa, --aviao) são
+   SVGs da pasta assets/decoracao, injetados pelo app.py como variáveis.
+   Os seletores [data-testid=...] são do Streamlit 1.65 (versão fixada no
+   requirements.txt): se o Streamlit for atualizado, confira a tela. */
+
+:root {
+  --roxo: #482960;
+  --roxo-escuro: #351A4D;
+  --dourado: #C2A05A;
+  --dourado-claro: #E3CFA0;
+  --creme: #FBF6EE;
+  --lilas: #F1EAF6;
+  --texto: #2E1F3E;
+}
+
+/* ---------- Fundo da área principal ---------- */
+.stApp {
+  background-color: var(--creme);
+  background-image: var(--ramo), var(--ramo), var(--nuvens), var(--nuvens);
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+  background-size: 300px, 340px, 200px, 170px;
+  background-position: left 400px top -40px, right -40px bottom 60px, right 30px top 300px, left 430px bottom 140px;
+}
+[data-testid="stHeader"] { background: transparent; }
+[data-testid="stMainBlockContainer"] { max-width: 1100px; padding-top: 2rem; padding-bottom: 7rem; }
+
+/* ---------- Barra lateral ---------- */
+[data-testid="stSidebar"] {
+  min-width: 380px !important;
+  max-width: 380px !important;
+  background: linear-gradient(180deg, #3A1A55 0%, #4B2A69 55%, #3A1A55 100%);
+}
+[data-testid="stSidebarContent"] {
+  background-image: var(--ondas), var(--ramo);
+  background-repeat: repeat-x, no-repeat;
+  background-size: 60px 30px, 260px;
+  background-position: left bottom, right -70px top 40px;
+}
+[data-testid="stSidebarUserContent"] { padding-top: 0; padding-bottom: 5rem; }
+
+.st-key-marca { align-items: center; gap: 0.6rem; }
+.st-key-marca [data-testid="stElementContainer"]:first-child img { filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35)); }
+
+.menu-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 13px 18px; margin: 10px 0 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(227, 207, 160, 0.35);
+  border-left: 4px solid var(--dourado);
+  background: rgba(255, 255, 255, 0.09);
+  color: #FFFFFF; font-size: 1.05rem;
+}
+.menu-item svg { width: 26px; height: 26px; stroke: var(--dourado-claro); }
+
+.rotulo-exemplos {
+  margin: 22px 0 6px; padding-top: 18px;
+  border-top: 1px solid rgba(227, 207, 160, 0.25);
+  font-family: "Cinzel", serif; letter-spacing: 0.18em;
+  font-size: 0.85rem; color: var(--dourado);
+}
+
+/* Cartões de exemplo (botões) */
+[class*="st-key-exemplo"] button {
+  position: relative;
+  justify-content: flex-start;
+  min-height: 64px;
+  padding: 12px 44px 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(227, 207, 160, 0.35);
+  background: rgba(255, 255, 255, 0.05);
+  color: #F7F0E3;
+  text-align: left;
+}
+[class*="st-key-exemplo"] button:hover {
+  border-color: var(--dourado);
+  background: rgba(255, 255, 255, 0.10);
+  color: #FFFFFF;
+}
+[class*="st-key-exemplo"] button p { text-align: left; font-size: 0.95rem; line-height: 1.35; }
+[class*="st-key-exemplo"] button [data-testid="stIconMaterial"] {
+  color: var(--dourado); font-size: 1.7rem; margin-right: 8px;
+}
+[class*="st-key-exemplo"] button::after {
+  content: "›"; position: absolute; right: 16px; top: 50%;
+  transform: translateY(-55%); font-size: 1.6rem; color: var(--dourado-claro);
+}
+
+.st-key-limpar button {
+  background: transparent; border: none; color: rgba(247, 240, 227, 0.7);
+  padding-left: 4px;
+}
+.st-key-limpar button:hover { color: #FFFFFF; background: transparent; }
+
+/* ---------- Cabeçalho ---------- */
+.lema {
+  width: fit-content; margin: 1.6rem 0 0 auto;
+  padding: 10px 0;
+  border-top: 1px solid var(--dourado); border-bottom: 1px solid var(--dourado);
+  font-family: "Cinzel", serif; font-size: 0.82rem; line-height: 1.75;
+  letter-spacing: 0.28em; color: #B8924A;
+}
+@media (max-width: 1250px) { .lema { display: none; } }
+
+.subtitulo {
+  text-align: center; color: var(--roxo);
+  font-size: 1.2rem; margin: 0.2rem 0 1.6rem;
+}
+.aviso-simulado {
+  text-align: center; color: #9A7A3E; font-size: 0.85rem; margin: -1.2rem 0 1.4rem;
+}
+
+/* ---------- Mensagens ---------- */
+[data-testid="stChatMessage"] {
+  background: transparent; padding: 0; gap: 20px; align-items: flex-start;
+}
+[data-testid="stChatMessageAvatarCustom"] {
+  width: 66px; height: 66px; min-width: 66px; border-radius: 50%;
+}
+[data-testid="stChatMessage"] > img {
+  width: 66px; height: 66px; min-width: 66px; border-radius: 50%;
+  border: 2px solid var(--dourado-claro);
+  background: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(72, 41, 96, 0.18);
+}
+
+/* Balão do assistente: lilás, à esquerda */
+[class*="-assistant"] [data-testid="stChatMessageContent"] {
+  background: var(--lilas);
+  border: 1px solid #E6DAEE;
+  border-radius: 18px;
+  padding: 22px 28px 14px;
+  box-shadow: 0 8px 22px rgba(72, 41, 96, 0.08);
+  max-width: 860px;
+  margin: 0;
+  color: var(--roxo);
+}
+[class*="-assistant"] [data-testid="stChatMessageContent"] strong { color: var(--roxo-escuro); }
+
+/* Balão do usuário: creme com borda dourada, à direita */
+[class*="-user"] [data-testid="stChatMessage"] { flex-direction: row-reverse; }
+[class*="-user"] [data-testid="stChatMessageContent"] {
+  flex: 0 1 auto;
+  margin: 0 0 0 auto;
+  background: #FBF1E0;
+  border: 1px solid #D9BF8A;
+  border-radius: 16px;
+  padding: 14px 26px 10px;
+  box-shadow: 0 6px 16px rgba(194, 160, 90, 0.15);
+  max-width: 560px;
+}
+[class*="-user"] [data-testid="stChatMessageAvatarCustom"] {
+  background: radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
+  box-shadow: 0 4px 12px rgba(184, 135, 62, 0.35);
+  display: flex; align-items: center; justify-content: center;
+}
+[class*="-user"] [data-testid="stChatMessageAvatarCustom"] [data-testid="stIconMaterial"] {
+  color: #FFF8EC; font-size: 2.3rem;
+}
+
+.hora { text-align: right; font-size: 0.8rem; color: #8A7A99; margin-top: -0.4rem; }
+[class*="-user"] .hora { margin-top: -0.6rem; }
+
+/* Balão de espera: estreito, como no template */
+.st-key-msg-espera-assistant [data-testid="stChatMessageContent"] {
+  flex: 0 1 auto; min-width: 420px; padding-bottom: 20px;
+}
+
+/* Tabela e SQL dentro do balão */
+[class*="-assistant"] [data-testid="stExpander"] details {
+  background: rgba(255, 255, 255, 0.6); border-color: #E6DAEE;
+}
+
+/* "Digitando...": três pontos pulsando */
+.digitando { display: flex; gap: 7px; margin: 4px 0 10px; }
+.digitando span {
+  width: 10px; height: 10px; border-radius: 50%; background: var(--roxo);
+  animation: pulsar 1.2s infinite ease-in-out;
+}
+.digitando span:nth-child(2) { animation-delay: 0.2s; }
+.digitando span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes pulsar { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+
+/* ---------- Caixa de pergunta ---------- */
+[data-testid="stBottom"], [data-testid="stBottom"] > div, [data-testid="stBottomBlockContainer"] { background: transparent; }
+[data-testid="stBottomBlockContainer"] { max-width: 1100px; padding-bottom: 1.6rem; }
+[data-testid="stChatInput"] {
+  position: relative;
+  border: 1.5px solid var(--dourado);
+  border-radius: 999px;
+  background: #FFFDF8;
+  box-shadow: 0 8px 24px rgba(72, 41, 96, 0.10);
+  padding: 8px 10px 8px 84px;
+}
+[data-testid="stChatInput"] > div { background: transparent; border: none; box-shadow: none; }
+[data-testid="stChatInput"]::before {
+  content: ""; position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  width: 48px; height: 48px; border-radius: 50%;
+  background: var(--pessoa) center / 58% no-repeat,
+              radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
+}
+[data-testid="stChatInput"]::after {
+  content: ""; position: absolute; left: 74px; top: 22%; height: 56%;
+  border-left: 1px solid #E3D3B0;
+}
+[data-testid="stChatInputTextArea"] { font-size: 1.05rem; }
+[data-testid="stChatInputSubmitButton"] {
+  width: 92px; height: 50px; border-radius: 999px;
+  background: var(--roxo) var(--aviao) center / 26px no-repeat !important;
+}
+[data-testid="stChatInputSubmitButton"]:disabled { opacity: 0.85; }
+[data-testid="stChatInputSubmitButton"] svg { display: none; }
