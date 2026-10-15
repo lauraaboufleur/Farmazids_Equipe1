@@ -1,5 +1,5 @@
 /* Estilo do chatbot da Farmazids, seguindo o template visual aprovado.
-   As imagens decorativas (--ramo, --nuvens, --ondas, --pessoa, --aviao) são
+   As imagens decorativas (--pessoa, --aviao) são
    SVGs da pasta assets/decoracao, injetados pelo app.py como variáveis.
    Os seletores [data-testid=...] são do Streamlit 1.65 (versão fixada no
    requirements.txt): se o Streamlit for atualizado, confira a tela. */
@@ -15,85 +15,27 @@
 }
 
 /* ---------- Fundo da área principal ---------- */
-.stApp {
-  background-color: var(--creme);
-  background-image: var(--ramo), var(--ramo), var(--nuvens), var(--nuvens);
-  background-repeat: no-repeat;
-  background-attachment: fixed;
-  background-size: 300px, 340px, 200px, 170px;
-  background-position: left 400px top -40px, right -40px bottom 60px, right 30px top 300px, left 430px bottom 140px;
-}
-[data-testid="stHeader"] { background: transparent; }
-[data-testid="stMainBlockContainer"] { max-width: 1100px; padding-top: 2rem; padding-bottom: 7rem; }
-
-/* ---------- Barra lateral ---------- */
-[data-testid="stSidebar"] {
-  min-width: 380px !important;
-  max-width: 380px !important;
-  background: linear-gradient(180deg, #3A1A55 0%, #4B2A69 55%, #3A1A55 100%);
-}
-[data-testid="stSidebarContent"] {
-  background-image: var(--ondas), var(--ramo);
-  background-repeat: repeat-x, no-repeat;
-  background-size: 60px 30px, 260px;
-  background-position: left bottom, right -70px top 40px;
-}
-[data-testid="stSidebarUserContent"] { padding-top: 0; padding-bottom: 5rem; }
-
-.st-key-marca { align-items: center; gap: 0.6rem; }
-.st-key-marca [data-testid="stElementContainer"]:first-child img { filter: drop-shadow(0 6px 14px rgba(0, 0, 0, 0.35)); }
-
-.menu-item {
-  display: flex; align-items: center; gap: 14px;
-  padding: 13px 18px; margin: 10px 0 4px;
-  border-radius: 12px;
-  border: 1px solid rgba(227, 207, 160, 0.35);
-  border-left: 4px solid var(--dourado);
-  background: rgba(255, 255, 255, 0.09);
-  color: #FFFFFF; font-size: 1.05rem;
-}
-.menu-item svg { width: 26px; height: 26px; stroke: var(--dourado-claro); }
-
-.rotulo-exemplos {
-  margin: 22px 0 6px; padding-top: 18px;
-  border-top: 1px solid rgba(227, 207, 160, 0.25);
-  font-family: "Cinzel", serif; letter-spacing: 0.18em;
-  font-size: 0.85rem; color: var(--dourado);
-}
-
-/* Cartões de exemplo (botões) */
-[class*="st-key-exemplo"] button {
-  position: relative;
-  justify-content: flex-start;
-  min-height: 64px;
-  padding: 12px 44px 12px 16px;
-  border-radius: 12px;
-  border: 1px solid rgba(227, 207, 160, 0.35);
-  background: rgba(255, 255, 255, 0.05);
-  color: #F7F0E3;
-  text-align: left;
-}
-[class*="st-key-exemplo"] button:hover {
-  border-color: var(--dourado);
-  background: rgba(255, 255, 255, 0.10);
-  color: #FFFFFF;
-}
-[class*="st-key-exemplo"] button p { text-align: left; font-size: 0.95rem; line-height: 1.35; }
-[class*="st-key-exemplo"] button [data-testid="stIconMaterial"] {
-  color: var(--dourado); font-size: 1.7rem; margin-right: 8px;
-}
-[class*="st-key-exemplo"] button::after {
-  content: "›"; position: absolute; right: 16px; top: 50%;
-  transform: translateY(-55%); font-size: 1.6rem; color: var(--dourado-claro);
-}
-
-.st-key-limpar button {
-  background: transparent; border: none; color: rgba(247, 240, 227, 0.7);
-  padding-left: 4px;
-}
-.st-key-limpar button:hover { color: #FFFFFF; background: transparent; }
+.stApp { background-color: var(--creme); }
+/* Sem barra lateral: esconde a barra do Streamlit e o botão que abriria a lateral. */
+[data-testid="stHeader"],
+[data-testid="stSidebar"],
+[data-testid="stSidebarCollapsedControl"] { display: none; }
+[data-testid="stMainBlockContainer"] { max-width: 1100px; padding-top: 0; padding-bottom: 7rem; }
 
 /* ---------- Cabeçalho ---------- */
+/* Fixo no topo: a conversa rola por baixo dele. O sticky vai na caixa que o
+   Streamlit cria em volta do container (stLayoutWrapper); no próprio container
+   não funciona, porque essa caixa tem só a altura do cabeçalho. */
+[data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho) {
+  position: sticky; top: 0; z-index: 999;
+  background-color: var(--creme);
+  /* Estende o fundo creme até as bordas da tela, para a conversa não aparecer nas laterais. */
+  box-shadow: 0 0 0 100vmax var(--creme);
+  clip-path: inset(0 -100vmax);
+  padding-top: 1.6rem;
+  border-bottom: 1px solid #E8DCC4;
+  margin-bottom: 1.2rem;
+}
 .lema {
   width: fit-content; margin: 1.6rem 0 0 auto;
   padding: 10px 0;
@@ -105,10 +47,10 @@
 
 .subtitulo {
   text-align: center; color: var(--roxo);
-  font-size: 1.2rem; margin: 0.2rem 0 1.6rem;
+  font-size: 1.2rem; margin: 0.2rem 0 1rem;
 }
 .aviso-simulado {
-  text-align: center; color: #9A7A3E; font-size: 0.85rem; margin: -1.2rem 0 1.4rem;
+  text-align: center; color: #9A7A3E; font-size: 0.85rem; margin: -0.8rem 0 1rem;
 }
 
 /* ---------- Mensagens ---------- */
