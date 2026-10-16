@@ -97,7 +97,7 @@ if "hora_inicio" not in st.session_state:
 
 # ---------- Cabeçalho (fica fixo no topo: ver .st-key-cabecalho no estilo.css) ----------
 with st.container(key="cabecalho"):
-    _, centro, direita = st.columns([1, 2.2, 1])
+    _, centro, direita = st.columns([1, 1.8, 1])  # coluna do meio define o tamanho do letreiro
     with centro:
         st.image(TITULO, width="stretch")
     with direita:
