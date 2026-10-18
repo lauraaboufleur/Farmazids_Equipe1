@@ -24,6 +24,7 @@ from cliente_chatbot import MODO_SIMULADO, perguntar
 ASSETS = Path(__file__).parent / "assets"
 LOGO = str(ASSETS / "logo_farmazids.png")                    # símbolo redondo
 TITULO = str(ASSETS / "titulo_farmazids.png")                # letreiro roxo e dourado (fundo claro)
+TITULO_ESCURO = str(ASSETS / "titulo_farmazids_escuro.png")  # mesmo letreiro com as letras roxas em branco
 FUSO = ZoneInfo("America/Sao_Paulo")
 
 # Colunas que parecem número, mas são códigos (não podem perder zeros à esquerda).
@@ -82,9 +83,22 @@ BOAS_VINDAS = (
 # Depois desse tempo, o balão de espera explica por que está demorando.
 SEGUNDOS_AVISO_DEMORA = 15
 
+# Cores das células da tabela no modo escuro. A tabela é desenhada pelo
+# Streamlit, sem passar pelo CSS, então a cor vai pelo Styler. A linha de
+# títulos não aceita cor pelo Styler e continua lilás clara.
+CELULAS_ESCURAS = {"background-color": "#261C33", "color": "#EDE6F2"}
+
 
 def agora():
     return datetime.now(FUSO).strftime("%H:%M")
+
+
+def modo_escuro():
+    return st.session_state.tema == "escuro"
+
+
+def trocar_tema():
+    st.session_state.tema = "claro" if modo_escuro() else "escuro"
 
 
 def svg_como_url(nome):
@@ -100,6 +114,9 @@ def aplicar_estilo():
         "}"
     )
     css = (ASSETS / "estilo.css").read_text(encoding="utf-8")
+    # No modo escuro, o estilo-escuro.css troca as cores do estilo.css.
+    if modo_escuro():
+        css += "\n" + (ASSETS / "estilo-escuro.css").read_text(encoding="utf-8")
     st.html(f"<style>{variaveis}\n{css}</style>")
 
 
@@ -199,7 +216,10 @@ def montar_tabela(colunas, linhas):
     formatos = {nomes[coluna]: funcao for coluna, funcao in formatos.items()}
     # O Styler só muda o que aparece na tela: por baixo, os números continuam
     # números, então clicar no cabeçalho ordena do mais barato ao mais caro.
-    return tabela.style.format(formatos, na_rep=VAZIO)
+    estilo = tabela.style.format(formatos, na_rep=VAZIO)
+    if modo_escuro():
+        estilo = estilo.set_properties(**CELULAS_ESCURAS)
+    return estilo
 
 
 # ---------- Mensagens ----------
@@ -271,8 +291,9 @@ def responder(pergunta):
 
 # ---------- Página ----------
 st.set_page_config(page_title="Farmazids | Chatbot", page_icon=LOGO, layout="wide")
-aplicar_estilo()
 
+if "tema" not in st.session_state:
+    st.session_state.tema = "claro"  # "claro" ou "escuro", trocado pelo botão do cabeçalho
 if "mensagens" not in st.session_state:
     st.session_state.mensagens = []
 if "hora_inicio" not in st.session_state:
@@ -280,11 +301,24 @@ if "hora_inicio" not in st.session_state:
 if "pendente" not in st.session_state:
     st.session_state.pendente = None  # pergunta esperando resposta
 
+aplicar_estilo()
+
 # ---------- Cabeçalho (fica fixo no topo: ver .st-key-cabecalho no estilo.css) ----------
 with st.container(key="cabecalho"):
+    # Botão claro/escuro no canto esquerdo (ver .st-key-botao-tema no estilo.css).
+    # Fica bloqueado enquanto uma resposta está a caminho: trocar o tema
+    # redesenha a tela, e isso interromperia a resposta.
+    st.button(
+        "Claro" if modo_escuro() else "Escuro",
+        key="botao-tema",
+        icon=":material/light_mode:" if modo_escuro() else ":material/dark_mode:",
+        help="Mudar para o modo claro" if modo_escuro() else "Mudar para o modo escuro",
+        on_click=trocar_tema,
+        disabled=st.session_state.pendente is not None,
+    )
     # O tamanho do letreiro vem do estilo.css (.st-key-cabecalho img): menor no
     # celular que no computador. O lema fica à direita e some em telas estreitas.
-    st.image(TITULO)
+    st.image(TITULO_ESCURO if modo_escuro() else TITULO)
     st.markdown("<div class='lema'>TRADIÇÃO<br>QUE GERA<br>CONHECIMENTO</div>", unsafe_allow_html=True)
     st.markdown(
         "<p class='subtitulo'>Assistente de dados para consulta de preços, "

@@ -1,0 +1,31 @@
+/* Modo escuro do chatbot da Farmazids.
+   O app.py só carrega este arquivo quando o botão do cabeçalho está no modo
+   escuro, logo depois do estilo.css. Aqui só mudam os valores das cores; o
+   resto vem do estilo.css. O roxo da marca some sobre fundo escuro, então o
+   destaque passa a ser o dourado. */
+
+:root {
+  --fundo: #1A1324;
+  --linha-cabecalho: #3A2C4A;
+  --cor-lema: #C2A05A;
+  --cor-subtitulo: #D9C7E8;
+  --cor-aviso: #D4B97A;
+  --balao-assistente: #261C33;
+  --borda-assistente: #3A2C4A;
+  --texto-assistente: #EDE6F2;
+  --negrito-assistente: #E3CFA0;
+  --balao-usuario: #2C2230;
+  --borda-usuario: #8C7340;
+  --cor-hora: #A496B3;
+  --cor-pontos: #C2A05A;
+  --fundo-caixa: #261C33;
+  --divisoria-caixa: #4A3A5A;
+  --botao-enviar: #5A3778;
+}
+
+/* O tema do Streamlit continua claro (config.toml), então o texto dele
+   continua escuro. Aqui o texto fica claro. */
+.stApp,
+[class*="-user"] [data-testid="stChatMessageContent"],
+[data-testid="stChatInputTextArea"] { color: #EDE6F2; }
+[data-testid="stChatInputTextArea"]::placeholder { color: #A496B3; }
