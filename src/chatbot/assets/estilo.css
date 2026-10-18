@@ -140,7 +140,7 @@
 
 /* ---------- Caixa de pergunta ---------- */
 [data-testid="stBottom"], [data-testid="stBottom"] > div, [data-testid="stBottomBlockContainer"] { background: transparent; }
-[data-testid="stBottomBlockContainer"] { max-width: 1100px; padding-bottom: 1.6rem; }
+[data-testid="stBottomBlockContainer"] { max-width: 860px; padding-bottom: 1.6rem; }
 [data-testid="stChatInput"] {
   position: relative;
   border: 1.5px solid var(--dourado);

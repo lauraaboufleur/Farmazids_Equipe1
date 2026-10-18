@@ -9,6 +9,7 @@ imagens em assets/. Este arquivo só monta a tela e conversa com o backend.
 """
 
 import base64
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
@@ -58,6 +59,10 @@ LARGURAS = {"Produto": st.column_config.Column(width=300),
 # Como sim/não aparece na tabela (ex.: coluna Estoque).
 MARCAS = {"true": "✓", "false": "✗"}
 
+# O que aparece quando falta a informação (preço, estoque...), na tabela e no texto.
+VAZIO = "-"
+TEXTOS_VAZIOS = {"", "none", "null", "nan", "nat"}
+
 # Como os nomes das farmácias aparecem na tabela.
 NOMES_FARMACIAS = {
     "farmaponte": "FarmaPonte",
@@ -99,25 +104,30 @@ def aplicar_estilo():
 
 
 # ---------- Tabela ----------
+def vazio(valor):
+    """None, NaN, "None", "null" e texto vazio contam como "sem informação"."""
+    return valor is None or (not isinstance(valor, str) and pd.isna(valor)) or str(valor).strip().lower() in TEXTOS_VAZIOS
+
+
 def em_reais(valor):
     """4.29 -> "R$ 4,29"; 1234.5 -> "R$ 1.234,50"."""
-    if pd.isna(valor):
-        return ""
+    if vazio(valor):
+        return VAZIO
     texto = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return f"R$ {texto}"
 
 
 def inteiro_br(valor):
     """11629 -> "11.629"."""
-    if pd.isna(valor):
-        return ""
+    if vazio(valor):
+        return VAZIO
     return f"{int(valor):,}".replace(",", ".")
 
 
 def data_br(valor):
     """"2026-10-16" -> "16/10/2026". Se não for uma data nesse formato, fica como veio."""
-    if valor is None or pd.isna(valor):
-        return ""
+    if vazio(valor):
+        return VAZIO
     texto = str(valor)
     if len(texto) >= 10 and texto[4] == "-" and texto[7] == "-":
         return f"{texto[8:10]}/{texto[5:7]}/{texto[0:4]}"
@@ -133,6 +143,9 @@ def montar_tabela(colunas, linhas):
     ordenação funcionar), "true"/"false" vira caixa de seleção, preços aparecem
     em reais e datas no formato brasileiro."""
     tabela = pd.DataFrame(linhas, columns=colunas)
+    # Primeiro, tudo que é "sem informação" vira vazio de verdade (None), para
+    # não atrapalhar a conversão dos preços em número.
+    tabela = tabela.astype(object).map(lambda v: None if vazio(v) else v)
     formatos = {}
 
     for coluna in tabela.columns:
@@ -143,11 +156,11 @@ def montar_tabela(colunas, linhas):
 
         if valores.dropna().astype(str).str.lower().isin(["true", "false"]).all() and valores.notna().any():
             # Verdadeiro vira ✓, falso vira ✗ e vazio fica em branco (nunca "True", "False" ou "None").
-            tabela[coluna] = valores.map(lambda v: MARCAS.get(str(v).lower(), ""))
+            tabela[coluna] = valores.map(lambda v: MARCAS.get(str(v).lower(), VAZIO))
             continue
 
         if chave == "farmacia":
-            tabela[coluna] = valores.map(lambda v: NOMES_FARMACIAS.get(str(v).lower(), v))
+            tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_FARMACIAS.get(str(v).lower(), v))
             continue
 
         if chave in ("dt", "data_coleta") or chave.startswith("data"):
@@ -158,26 +171,48 @@ def montar_tabela(colunas, linhas):
         # Só converte se nenhum valor preenchido se perdeu na conversão.
         if convertida.notna().sum() != valores.notna().sum():
             continue
-        tabela[coluna] = convertida
         if "preco" in chave or "valor" in chave:
-            formatos[coluna] = em_reais
+            funcao = em_reais
         elif (convertida.dropna() % 1 == 0).all():
-            formatos[coluna] = inteiro_br
+            funcao = inteiro_br
+        else:
+            funcao = None
 
-    # Texto vazio aparece em branco, e não como "None".
+        if convertida.isna().any():
+            # O Streamlit escreve "None" em célula numérica vazia, sem respeitar o
+            # formato. Então, se faltar algum valor, a coluna já vai pronta como
+            # texto ("R$ 4,29" ou "-"). Nas colunas completas, o número continua
+            # número e a ordenação pelo cabeçalho funciona.
+            tabela[coluna] = convertida.map(funcao or (lambda v: VAZIO if vazio(v) else v))
+        else:
+            tabela[coluna] = convertida
+            if funcao:
+                formatos[coluna] = funcao
+
+    # Texto sem informação aparece como "-", e não como "None".
     for coluna in tabela.columns:
         if tabela[coluna].dtype == object:
-            tabela[coluna] = tabela[coluna].map(lambda v: "" if v is None or str(v).lower() in ("none", "nan", "null") else v)
+            tabela[coluna] = tabela[coluna].map(lambda v: VAZIO if vazio(v) else v)
 
     nomes = {coluna: nome_coluna(coluna) for coluna in tabela.columns}
     tabela = tabela.rename(columns=nomes)
     formatos = {nomes[coluna]: funcao for coluna, funcao in formatos.items()}
     # O Styler só muda o que aparece na tela: por baixo, os números continuam
     # números, então clicar no cabeçalho ordena do mais barato ao mais caro.
-    return tabela.style.format(formatos) if formatos else tabela
+    return tabela.style.format(formatos, na_rep=VAZIO)
 
 
 # ---------- Mensagens ----------
+def limpar_texto(texto):
+    """Ajustes no texto do Bedrock antes de mostrar.
+    - "$": o Streamlit lê o que está entre dois cifrões como fórmula matemática,
+      e "R$ 8,19; concorrente R$ 16,90" aparecia com o meio formatado (as caixas
+      verdes). Com "\\$" o cifrão aparece normal.
+    - "None": quando falta um valor, aparece "-"."""
+    texto = re.sub(r"\bNone\b", VAZIO, texto or "")
+    return texto.replace("$", "\\$")
+
+
 def rodape(mensagem):
     """Hora da mensagem e, nas respostas, quanto tempo levou."""
     texto = mensagem["hora"]
@@ -195,7 +230,7 @@ def mostrar(mensagem, chave):
     avatar = LOGO if papel == "assistant" else ":material/person:"
     with st.container(key=f"msg-{chave}-{papel}"):
         with st.chat_message(papel, avatar=avatar):
-            st.markdown(mensagem["texto"])
+            st.markdown(limpar_texto(mensagem["texto"]))
             if mensagem.get("colunas"):
                 st.dataframe(
                     montar_tabela(mensagem["colunas"], mensagem["linhas"]),
