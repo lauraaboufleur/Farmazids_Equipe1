@@ -36,8 +36,18 @@
   border-bottom: 1px solid #E8DCC4;
   margin-bottom: 1.2rem;
 }
+/* Letreiro centralizado. A largura acompanha a tela: no máximo 340 px no
+   computador e cerca de metade da largura no celular. */
+.st-key-cabecalho [data-testid="stElementContainer"]:has([data-testid="stImage"]) { align-self: center; }
+.st-key-cabecalho [data-testid="stImage"] img {
+  width: clamp(170px, 50vw, 340px) !important; height: auto;
+}
+/* O lema fica no canto direito do cabeçalho, sem empurrar o letreiro. */
+.st-key-cabecalho [data-testid="stElementContainer"]:has(.lema) {
+  position: absolute; right: 0; top: 1.2rem; width: auto;
+}
 .lema {
-  width: fit-content; margin: 1.6rem 0 0 auto;
+  width: fit-content; margin: 0;
   padding: 10px 0;
   border-top: 1px solid var(--dourado); border-bottom: 1px solid var(--dourado);
   font-family: "Cinzel", serif; font-size: 0.82rem; line-height: 1.75;
@@ -79,6 +89,12 @@
   color: var(--roxo);
 }
 [class*="-assistant"] [data-testid="stChatMessageContent"] strong { color: var(--roxo-escuro); }
+/* O Bedrock às vezes põe nomes e preços entre crases (`assim`). No markdown isso
+   vira "código" (letra de máquina, verde, com fundo). Aqui aparece como texto normal. */
+[data-testid="stMarkdownContainer"] code {
+  font-family: inherit !important; font-size: inherit !important; color: var(--roxo-escuro) !important;
+  background: transparent !important; padding: 0 !important; border: none !important; font-weight: 600;
+}
 
 /* Balão do usuário: creme com borda dourada, à direita */
 [class*="-user"] [data-testid="stChatMessage"] { flex-direction: row-reverse; }
@@ -109,10 +125,6 @@
   flex: 0 1 auto; min-width: 420px; padding-bottom: 20px;
 }
 
-/* Tabela e SQL dentro do balão */
-[class*="-assistant"] [data-testid="stExpander"] details {
-  background: rgba(255, 255, 255, 0.6); border-color: #E6DAEE;
-}
 
 /* "Digitando...": três pontos pulsando */
 .digitando { display: flex; gap: 7px; margin: 4px 0 10px; }
@@ -123,6 +135,8 @@
 .digitando span:nth-child(2) { animation-delay: 0.2s; }
 .digitando span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes pulsar { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+.cronometro { color: #9A7A3E; font-variant-numeric: tabular-nums; margin-left: 4px; }
+.aviso-demora { margin-top: 8px; font-size: 0.85rem; color: #8A7A99; }
 
 /* ---------- Caixa de pergunta ---------- */
 [data-testid="stBottom"], [data-testid="stBottom"] > div, [data-testid="stBottomBlockContainer"] { background: transparent; }
@@ -133,23 +147,48 @@
   border-radius: 999px;
   background: #FFFDF8;
   box-shadow: 0 8px 24px rgba(72, 41, 96, 0.10);
-  padding: 8px 10px 8px 84px;
+  padding: 4px 8px 4px 72px;
 }
 [data-testid="stChatInput"] > div { background: transparent; border: none; box-shadow: none; }
 [data-testid="stChatInput"]::before {
-  content: ""; position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
-  width: 48px; height: 48px; border-radius: 50%;
+  content: ""; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+  width: 42px; height: 42px; border-radius: 50%;
   background: var(--pessoa) center / 58% no-repeat,
               radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
 }
 [data-testid="stChatInput"]::after {
-  content: ""; position: absolute; left: 74px; top: 22%; height: 56%;
+  content: ""; position: absolute; left: 64px; top: 22%; height: 56%;
   border-left: 1px solid #E3D3B0;
 }
-[data-testid="stChatInputTextArea"] { font-size: 1.05rem; }
+[data-testid="stChatInputTextArea"] { font-size: 1rem; }
 [data-testid="stChatInputSubmitButton"] {
-  width: 92px; height: 50px; border-radius: 999px;
-  background: var(--roxo) var(--aviao) center / 26px no-repeat !important;
+  width: 80px; height: 44px; border-radius: 999px;
+  background: var(--roxo) var(--aviao) center / 23px no-repeat !important;
 }
 [data-testid="stChatInputSubmitButton"]:disabled { opacity: 0.85; }
+/* Caixa bloqueada enquanto a resposta não chega */
+[data-testid="stChatInput"]:has(textarea:disabled) { opacity: 0.7; border-style: dashed; }
 [data-testid="stChatInputSubmitButton"] svg { display: none; }
+
+/* ---------- Celular ---------- */
+@media (max-width: 640px) {
+  [data-testid="stMainBlockContainer"] { padding-left: 0.8rem; padding-right: 0.8rem; padding-bottom: 6rem; }
+  [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho) { padding-top: 0.8rem; margin-bottom: 0.8rem; }
+  .subtitulo { font-size: 0.95rem; margin: 0 0 0.6rem; }
+  .aviso-simulado { font-size: 0.78rem; margin: -0.4rem 0 0.6rem; }
+
+  [data-testid="stChatMessage"] { gap: 10px; }
+  [data-testid="stChatMessageAvatarCustom"],
+  [data-testid="stChatMessage"] > img { width: 38px; height: 38px; min-width: 38px; }
+  [class*="-user"] [data-testid="stChatMessageAvatarCustom"] [data-testid="stIconMaterial"] { font-size: 1.4rem; }
+  [class*="-assistant"] [data-testid="stChatMessageContent"] { padding: 14px 16px 10px; border-radius: 14px; }
+  [class*="-user"] [data-testid="stChatMessageContent"] { padding: 10px 16px 8px; border-radius: 14px; }
+  .st-key-msg-espera-assistant [data-testid="stChatMessageContent"] { min-width: 0; }
+
+  [data-testid="stBottomBlockContainer"] { padding: 0 0.8rem 1rem; }
+  [data-testid="stChatInput"] { padding: 3px 6px 3px 52px; }
+  [data-testid="stChatInput"]::before { left: 9px; width: 34px; height: 34px; }
+  [data-testid="stChatInput"]::after { left: 48px; }
+  [data-testid="stChatInputTextArea"] { font-size: 0.95rem; }
+  [data-testid="stChatInputSubmitButton"] { width: 54px; height: 38px; background-size: 19px !important; }
+}

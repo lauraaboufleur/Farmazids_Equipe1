@@ -52,8 +52,11 @@ NOMES_COLUNAS = {
 # Larguras fixas para a tabela caber no balão sem rolar para o lado. O nome do
 # produto pode ficar cortado; arrastando a borda do cabeçalho, a coluna aumenta.
 LARGURAS = {"Produto": st.column_config.Column(width=300),
-            "Estoque": st.column_config.Column(width=74),
+            "Estoque": st.column_config.TextColumn(width=74, alignment="center"),
             "Coleta": st.column_config.Column(width=100)}
+
+# Como sim/não aparece na tabela (ex.: coluna Estoque).
+MARCAS = {"true": "✓", "false": "✗"}
 
 # Como os nomes das farmácias aparecem na tabela.
 NOMES_FARMACIAS = {
@@ -139,7 +142,8 @@ def montar_tabela(colunas, linhas):
         valores = tabela[coluna]
 
         if valores.dropna().astype(str).str.lower().isin(["true", "false"]).all() and valores.notna().any():
-            tabela[coluna] = valores.astype(str).str.lower().map({"true": True, "false": False})
+            # Verdadeiro vira ✓, falso vira ✗ e vazio fica em branco (nunca "True", "False" ou "None").
+            tabela[coluna] = valores.map(lambda v: MARCAS.get(str(v).lower(), ""))
             continue
 
         if chave == "farmacia":
@@ -159,6 +163,11 @@ def montar_tabela(colunas, linhas):
             formatos[coluna] = em_reais
         elif (convertida.dropna() % 1 == 0).all():
             formatos[coluna] = inteiro_br
+
+    # Texto vazio aparece em branco, e não como "None".
+    for coluna in tabela.columns:
+        if tabela[coluna].dtype == object:
+            tabela[coluna] = tabela[coluna].map(lambda v: "" if v is None or str(v).lower() in ("none", "nan", "null") else v)
 
     nomes = {coluna: nome_coluna(coluna) for coluna in tabela.columns}
     tabela = tabela.rename(columns=nomes)
@@ -194,9 +203,6 @@ def mostrar(mensagem, chave):
                     width="stretch",
                     column_config=LARGURAS,
                 )
-            if mensagem.get("sql"):
-                with st.expander("Ver o SQL usado"):
-                    st.code(mensagem["sql"], language="sql")
             st.markdown(rodape(mensagem), unsafe_allow_html=True)
 
 
@@ -241,11 +247,10 @@ if "pendente" not in st.session_state:
 
 # ---------- Cabeçalho (fica fixo no topo: ver .st-key-cabecalho no estilo.css) ----------
 with st.container(key="cabecalho"):
-    _, centro, direita = st.columns([1, 1.8, 1])  # coluna do meio define o tamanho do letreiro
-    with centro:
-        st.image(TITULO, width="stretch")
-    with direita:
-        st.markdown("<div class='lema'>TRADIÇÃO<br>QUE GERA<br>CONHECIMENTO</div>", unsafe_allow_html=True)
+    # O tamanho do letreiro vem do estilo.css (.st-key-cabecalho img): menor no
+    # celular que no computador. O lema fica à direita e some em telas estreitas.
+    st.image(TITULO)
+    st.markdown("<div class='lema'>TRADIÇÃO<br>QUE GERA<br>CONHECIMENTO</div>", unsafe_allow_html=True)
     st.markdown(
         "<p class='subtitulo'>Assistente de dados para consulta de preços, "
         "concorrentes, vendas e medicamentos.</p>",
