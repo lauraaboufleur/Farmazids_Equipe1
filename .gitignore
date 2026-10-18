@@ -19,3 +19,6 @@ data/processed/*
 
 # notebooks do jupyter
 *.ipynb
+
+# configuração local do Claude Code
+.claude/

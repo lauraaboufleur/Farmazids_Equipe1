@@ -1,0 +1,287 @@
+{
+  "Comment": "Chatbot Farmazids: pergunta -> SQL -> validação -> Athena -> resposta",
+  "QueryLanguage": "JSONPath",
+  "StartAt": "Inicializar",
+  "States": {
+    "Inicializar": {
+      "Type": "Pass",
+      "Parameters": {
+        "pergunta.$": "$.pergunta",
+        "tentativas": 0,
+        "erro_anterior": null
+      },
+      "Next": "GerarSQL"
+    },
+    "GerarSQL": {
+      "Type": "Task",
+      "Comment": "Agente 1: Lambda que pede o SQL ao Bedrock.",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "t1-eq1-gerar-sql",
+        "Payload": {
+          "pergunta.$": "$.pergunta",
+          "erro_anterior.$": "$.erro_anterior"
+        }
+      },
+      "ResultSelector": {
+        "sql.$": "$.Payload.sql"
+      },
+      "ResultPath": "$.geracao",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.falha",
+          "Next": "FalhaServico"
+        }
+      ],
+      "Next": "ContarTentativa"
+    },
+    "ContarTentativa": {
+      "Type": "Pass",
+      "Parameters": {
+        "pergunta.$": "$.pergunta",
+        "geracao.$": "$.geracao",
+        "erro_anterior.$": "$.erro_anterior",
+        "tentativas.$": "States.MathAdd($.tentativas, 1)"
+      },
+      "Next": "PodeResponder"
+    },
+    "PodeResponder": {
+      "Type": "Choice",
+      "Comment": "O Gerar SQL devolve CANNOT_ANSWER quando as views não têm a informação.",
+      "Choices": [
+        {
+          "Variable": "$.geracao.sql",
+          "StringEquals": "CANNOT_ANSWER",
+          "Next": "SemDados"
+        }
+      ],
+      "Default": "ValidarSQL"
+    },
+    "SemDados": {
+      "Type": "Pass",
+      "Parameters": {
+        "resposta": "Não encontrei nos dados disponíveis informação para responder a essa pergunta. Tente reformular ou perguntar sobre outro assunto.",
+        "sql": "",
+        "colunas": [],
+        "linhas": [],
+        "mb_lidos": 0
+      },
+      "End": true
+    },
+    "ValidarSQL": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "t1-eq1-validar-sql",
+        "Payload": {
+          "sql.$": "$.geracao.sql"
+        }
+      },
+      "ResultSelector": {
+        "valido.$": "$.Payload.valido",
+        "erro.$": "$.Payload.erro"
+      },
+      "ResultPath": "$.validacao",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.falha",
+          "Next": "FalhaServico"
+        }
+      ],
+      "Next": "SQLValido"
+    },
+    "SQLValido": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.validacao.valido",
+          "BooleanEquals": true,
+          "Next": "ExecutarAthena"
+        },
+        {
+          "Variable": "$.tentativas",
+          "NumericLessThan": 3,
+          "Next": "PrepararCorrecao"
+        }
+      ],
+      "Default": "FalhaValidacao"
+    },
+    "PrepararCorrecao": {
+      "Type": "Pass",
+      "Comment": "Manda de volta o SQL reprovado e o motivo, para o agente corrigir.",
+      "Parameters": {
+        "pergunta.$": "$.pergunta",
+        "tentativas.$": "$.tentativas",
+        "erro_anterior.$": "States.Format('SQL: {}\nErro: {}', $.geracao.sql, $.validacao.erro)"
+      },
+      "Next": "GerarSQL"
+    },
+    "ExecutarAthena": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "t1-eq1-executar-athena",
+        "Payload": {
+          "sql.$": "$.geracao.sql"
+        }
+      },
+      "ResultSelector": {
+        "ok.$": "$.Payload.ok",
+        "erro.$": "$.Payload.erro",
+        "colunas.$": "$.Payload.colunas",
+        "linhas.$": "$.Payload.linhas",
+        "mb_lidos.$": "$.Payload.mb_lidos"
+      },
+      "ResultPath": "$.resultado",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.falha",
+          "Next": "FalhaServico"
+        }
+      ],
+      "Next": "ConsultaOk"
+    },
+    "ConsultaOk": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Variable": "$.resultado.ok",
+          "BooleanEquals": true,
+          "Next": "GerarResposta"
+        },
+        {
+          "Variable": "$.tentativas",
+          "NumericLessThan": 3,
+          "Next": "PrepararCorrecaoAthena"
+        }
+      ],
+      "Default": "FalhaConsulta"
+    },
+    "PrepararCorrecaoAthena": {
+      "Type": "Pass",
+      "Comment": "Manda de volta o SQL que o Athena recusou e o motivo, para o agente corrigir.",
+      "Parameters": {
+        "pergunta.$": "$.pergunta",
+        "tentativas.$": "$.tentativas",
+        "erro_anterior.$": "States.Format('SQL: {}\nErro do Athena: {}', $.geracao.sql, $.resultado.erro)"
+      },
+      "Next": "GerarSQL"
+    },
+    "GerarResposta": {
+      "Type": "Task",
+      "Comment": "Agente 4: Lambda que pede ao Bedrock a resposta em português.",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "t1-eq1-redigir-resposta",
+        "Payload": {
+          "pergunta.$": "$.pergunta",
+          "colunas.$": "$.resultado.colunas",
+          "linhas.$": "$.resultado.linhas"
+        }
+      },
+      "ResultSelector": {
+        "resposta.$": "$.Payload.resposta"
+      },
+      "ResultPath": "$.final",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.falha",
+          "Next": "FalhaServico"
+        }
+      ],
+      "Next": "MontarSaida"
+    },
+    "MontarSaida": {
+      "Type": "Pass",
+      "Parameters": {
+        "resposta.$": "$.final.resposta",
+        "sql.$": "$.geracao.sql",
+        "colunas.$": "$.resultado.colunas",
+        "linhas.$": "$.resultado.linhas",
+        "mb_lidos.$": "$.resultado.mb_lidos"
+      },
+      "End": true
+    },
+    "FalhaValidacao": {
+      "Type": "Fail",
+      "Error": "SQLInvalido",
+      "Cause": "O SQL gerado foi reprovado 3 vezes na validação."
+    },
+    "FalhaConsulta": {
+      "Type": "Fail",
+      "Error": "ConsultaRecusada",
+      "Cause": "O Athena recusou o SQL gerado 3 vezes."
+    },
+    "FalhaServico": {
+      "Type": "Fail",
+      "Error": "ErroServico",
+      "Cause": "Um serviço falhou (Lambda, Bedrock ou Athena). Tente novamente em instantes."
+    }
+  }
+}
