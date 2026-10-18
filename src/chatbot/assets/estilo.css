@@ -79,12 +79,6 @@
   color: var(--roxo);
 }
 [class*="-assistant"] [data-testid="stChatMessageContent"] strong { color: var(--roxo-escuro); }
-/* O Bedrock às vezes põe nomes e preços entre crases (`assim`). No markdown isso
-   vira "código" (letra de máquina, verde, com fundo). Aqui aparece como texto normal. */
-[data-testid="stChatMessageContent"] [data-testid="stMarkdownContainer"] code {
-  font-family: inherit; font-size: inherit; color: var(--roxo-escuro);
-  background: transparent; padding: 0; border: none; font-weight: 600;
-}
 
 /* Balão do usuário: creme com borda dourada, à direita */
 [class*="-user"] [data-testid="stChatMessage"] { flex-direction: row-reverse; }
@@ -139,23 +133,23 @@
   border-radius: 999px;
   background: #FFFDF8;
   box-shadow: 0 8px 24px rgba(72, 41, 96, 0.10);
-  padding: 4px 8px 4px 72px;
+  padding: 8px 10px 8px 84px;
 }
 [data-testid="stChatInput"] > div { background: transparent; border: none; box-shadow: none; }
 [data-testid="stChatInput"]::before {
-  content: ""; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-  width: 42px; height: 42px; border-radius: 50%;
+  content: ""; position: absolute; left: 14px; top: 50%; transform: translateY(-50%);
+  width: 48px; height: 48px; border-radius: 50%;
   background: var(--pessoa) center / 58% no-repeat,
               radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
 }
 [data-testid="stChatInput"]::after {
-  content: ""; position: absolute; left: 64px; top: 22%; height: 56%;
+  content: ""; position: absolute; left: 74px; top: 22%; height: 56%;
   border-left: 1px solid #E3D3B0;
 }
-[data-testid="stChatInputTextArea"] { font-size: 1rem; }
+[data-testid="stChatInputTextArea"] { font-size: 1.05rem; }
 [data-testid="stChatInputSubmitButton"] {
-  width: 80px; height: 44px; border-radius: 999px;
-  background: var(--roxo) var(--aviao) center / 23px no-repeat !important;
+  width: 92px; height: 50px; border-radius: 999px;
+  background: var(--roxo) var(--aviao) center / 26px no-repeat !important;
 }
 [data-testid="stChatInputSubmitButton"]:disabled { opacity: 0.85; }
 [data-testid="stChatInputSubmitButton"] svg { display: none; }

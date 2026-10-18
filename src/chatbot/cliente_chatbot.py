@@ -8,16 +8,29 @@ Dois modos:
 Configuração por variáveis de ambiente (nada de credencial no código):
 - CHATBOT_MODO_SIMULADO = "1" (simulado) ou "0" (real)
 - CHATBOT_STATE_MACHINE_ARN = ARN da máquina Expressa
+- CHATBOT_CACHE_MINUTOS = por quantos minutos guardar uma resposta (padrão 30; 0 desliga)
+
+Dois cuidados com o tempo de resposta:
+- o cliente do boto3 é criado uma vez só e reaproveitado. Criar um novo a cada
+  pergunta obriga a abrir outra conexão com a AWS, o que custa alguns décimos
+  de segundo toda vez;
+- respostas certas ficam guardadas por alguns minutos. Se alguém repetir a
+  mesma pergunta, ela volta na hora, sem chamar Bedrock e Athena de novo.
+  Como a coleta só roda a cada dois dias, isso não deixa os dados velhos.
 """
 
 import json
 import os
+import threading
 import time
+from functools import lru_cache
 
 REGIAO = "us-east-2"
 ARN_MAQUINA = os.environ.get("CHATBOT_STATE_MACHINE_ARN", "")
 MODO_SIMULADO = os.environ.get("CHATBOT_MODO_SIMULADO", "1") == "1"
 TAMANHO_MAXIMO_PERGUNTA = 500
+CACHE_SEGUNDOS = int(os.environ.get("CHATBOT_CACHE_MINUTOS", "30")) * 60
+CACHE_MAXIMO = 200  # quantas perguntas guardar, no máximo
 
 # Os nomes vêm dos estados Fail da máquina (Error de cada um).
 MENSAGENS_ERRO = {
@@ -29,12 +42,62 @@ MENSAGENS_ERRO = {
 }
 MENSAGEM_GENERICA = "Algo deu errado ao responder. Tente de novo em instantes."
 
+# Respostas guardadas: {pergunta normalizada: (momento em que foi guardada, resultado)}.
+# Fica na memória do processo, então vale para todas as pessoas usando o app.
+_cache = {}
+_trava_cache = threading.Lock()
+
 
 def _falha(mensagem, detalhe=None):
-    # O detalhe técnico vai só para o terminal, nunca para a tela do usuário.
+    # O detalhe técnico vai só para o terminal (ou para os logs do Streamlit Cloud),
+    # nunca para a tela do usuário.
     if detalhe:
         print(f"[chatbot] erro: {detalhe}")
     return {"ok": False, "resposta": mensagem, "sql": None, "colunas": [], "linhas": []}
+
+
+def _normalizar(pergunta):
+    """"Qual o preço  da Dipirona?" e "qual o preço da dipirona" viram a mesma chave."""
+    return " ".join(pergunta.lower().split()).rstrip("?!. ")
+
+
+def _buscar_no_cache(chave):
+    if CACHE_SEGUNDOS <= 0:
+        return None
+    with _trava_cache:
+        guardado = _cache.get(chave)
+        if guardado is None:
+            return None
+        momento, resultado = guardado
+        if time.time() - momento > CACHE_SEGUNDOS:
+            del _cache[chave]
+            return None
+        return dict(resultado)
+
+
+def _guardar_no_cache(chave, resultado):
+    # Só guarda resposta certa: erro não pode ficar "preso" por 30 minutos.
+    if CACHE_SEGUNDOS <= 0 or not resultado["ok"]:
+        return
+    with _trava_cache:
+        if len(_cache) >= CACHE_MAXIMO:
+            mais_antiga = min(_cache, key=lambda k: _cache[k][0])
+            del _cache[mais_antiga]
+        _cache[chave] = (time.time(), dict(resultado))
+
+
+@lru_cache(maxsize=1)
+def _cliente_step_functions():
+    """Criado na primeira pergunta e reaproveitado nas seguintes."""
+    import boto3
+    from botocore.config import Config
+
+    config = Config(
+        connect_timeout=5,
+        read_timeout=120,  # a máquina Expressa responde de forma síncrona, pode levar alguns segundos
+        retries={"max_attempts": 2, "mode": "standard"},
+    )
+    return boto3.client("stepfunctions", region_name=REGIAO, config=config)
 
 
 def _perguntar_simulado(pergunta):
@@ -43,27 +106,28 @@ def _perguntar_simulado(pergunta):
         "ok": True,
         "resposta": f"(modo simulado) Você perguntou: \"{pergunta}\". "
                     "Quando o backend estiver ligado, a resposta de verdade aparece aqui.",
-        "sql": "SELECT farmacia, count(*) AS produtos\n"
+        "sql": "SELECT farmacia, nome, preco_pix, preco_cartao, em_estoque, data_coleta\n"
                "FROM vw_precos_concorrentes\n"
-               "WHERE dt = '2026-10-12'\n"
-               "GROUP BY farmacia\n"
+               "WHERE lower(nome) LIKE '%dipirona%'\n"
                "LIMIT 10",
-        "colunas": ["farmacia", "produtos"],
-        "linhas": [["farmaponte", "5419"], ["sao_joao", "6881"],
-                   ["veracruz", "4480"], ["sao_paulo", "11629"]],
+        "colunas": ["farmacia", "nome", "preco_pix", "preco_cartao", "em_estoque", "data_coleta"],
+        "linhas": [
+            ["sao_joao", "Dipirona Monoidratada 500mg 10 Comprimidos", "4.19", "4.49", "true", "2026-10-16"],
+            ["farmaponte", "Dipirona Monoidratada 500mg 10 Comprimidos", "4.29", "4.79", "true", "2026-10-16"],
+            ["veracruz", "Dipirona Gotas 500mg/ml 20ml", "7.90", "8.49", "false", "2026-10-16"],
+            ["sao_paulo", "Novalgina 1g 10 Comprimidos", "21.99", "23.90", "true", "2026-10-16"],
+        ],
     }
 
 
 def _perguntar_aws(pergunta):
-    import boto3
     from botocore.exceptions import BotoCoreError, ClientError
 
     if not ARN_MAQUINA:
         return _falha(MENSAGEM_GENERICA, "CHATBOT_STATE_MACHINE_ARN não foi definido.")
 
-    cliente = boto3.client("stepfunctions", region_name=REGIAO)
     try:
-        execucao = cliente.start_sync_execution(
+        execucao = _cliente_step_functions().start_sync_execution(
             stateMachineArn=ARN_MAQUINA,
             input=json.dumps({"pergunta": pergunta}, ensure_ascii=False),
         )
@@ -87,13 +151,25 @@ def _perguntar_aws(pergunta):
 
 def perguntar(pergunta):
     """Recebe a pergunta e devolve sempre as mesmas chaves:
-    ok, resposta, sql, colunas, linhas."""
+    ok, resposta, sql, colunas, linhas, duracao (segundos) e do_cache."""
+    inicio = time.perf_counter()
     pergunta = (pergunta or "").strip()
     if not pergunta:
-        return _falha("Escreva uma pergunta.")
-    if len(pergunta) > TAMANHO_MAXIMO_PERGUNTA:
-        return _falha(f"A pergunta pode ter no máximo {TAMANHO_MAXIMO_PERGUNTA} caracteres.")
+        resultado = _falha("Escreva uma pergunta.")
+    elif len(pergunta) > TAMANHO_MAXIMO_PERGUNTA:
+        resultado = _falha(f"A pergunta pode ter no máximo {TAMANHO_MAXIMO_PERGUNTA} caracteres.")
+    else:
+        chave = _normalizar(pergunta)
+        guardado = _buscar_no_cache(chave)
+        if guardado is not None:
+            guardado["do_cache"] = True
+            guardado["duracao"] = time.perf_counter() - inicio
+            return guardado
+        resultado = _perguntar_simulado(pergunta) if MODO_SIMULADO else _perguntar_aws(pergunta)
+        _guardar_no_cache(chave, resultado)
 
-    if MODO_SIMULADO:
-        return _perguntar_simulado(pergunta)
-    return _perguntar_aws(pergunta)
+    resultado["do_cache"] = False
+    resultado["duracao"] = time.perf_counter() - inicio
+    # Fica no log (terminal ou "Manage app" no Streamlit Cloud): ajuda a medir o tempo real.
+    print(f"[chatbot] {resultado['duracao']:.1f} s | ok={resultado['ok']} | {pergunta[:60]}")
+    return resultado
