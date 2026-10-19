@@ -221,6 +221,16 @@
 .st-key-login [data-testid="stImage"] img {
   width: clamp(136px, 40vw, 270px) !important; height: auto;
 }
+/* Logo + formulário no meio da tela, com o mesmo espaço em cima e embaixo.
+   "safe center": se a tela for baixa demais, o conjunto começa no topo e a página rola. */
+[data-testid="stMainBlockContainer"]:has(.st-key-login) {
+  min-height: 100dvh; box-sizing: border-box;
+  padding-top: 1.5rem; padding-bottom: 1.5rem;
+  display: flex; flex-direction: column;
+}
+[data-testid="stMainBlockContainer"]:has(.st-key-login) > [data-testid="stVerticalBlock"] { justify-content: safe center; }
+/* Formulário com 420 px no computador; no celular ocupa a largura da tela. */
+.st-key-login { width: 100%; max-width: 420px; align-self: center; }
 /* Esconde a dica em inglês "Press Enter to submit form" dentro dos campos. */
 .st-key-login [data-testid="InputInstructions"] { display: none; }
 
