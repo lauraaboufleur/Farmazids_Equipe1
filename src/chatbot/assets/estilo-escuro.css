@@ -30,13 +30,8 @@
 [data-testid="stChatInputTextArea"] { color: #EDE6F2; }
 [data-testid="stChatInputTextArea"]::placeholder { color: #A496B3; }
 
-/* Tela de login: rótulos, campos e botão com as cores claras do modo escuro. */
-.st-key-login [data-testid="stForm"] { border-color: var(--linha-cabecalho); }
+/* Tela de login: rótulos e campos com as cores claras do modo escuro. */
 .st-key-login [data-testid="stWidgetLabel"] p { color: #EDE6F2; }
-.st-key-login [data-testid="stTextInputRootElement"] { background: var(--fundo-caixa); border: 1px solid var(--divisoria-caixa); }
+.st-key-login [data-testid="stTextInputRootElement"] { border-color: var(--divisoria-caixa); }
 .st-key-login input { color: #EDE6F2; -webkit-text-fill-color: #EDE6F2; caret-color: #EDE6F2; }
 .st-key-login [data-testid="stTextInputRootElement"] button { background: transparent; color: #A496B3; }
-.st-key-login [data-testid="stFormSubmitButton"] button {
-  background: var(--botao-enviar); border-color: var(--borda-usuario); color: #EDE6F2;
-}
-.st-key-login [data-testid="stFormSubmitButton"] button:hover { border-color: var(--cor-pontos); color: #E3CFA0; }

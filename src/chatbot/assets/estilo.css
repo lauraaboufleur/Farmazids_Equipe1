@@ -216,12 +216,7 @@
 [data-testid="stChatInputSubmitButton"] svg { display: none; }
 
 /* ---------- Tela de login ---------- */
-/* Letreiro centralizado sobre o formulário, do mesmo tamanho do letreiro do chat. */
-.st-key-login [data-testid="stElementContainer"]:has([data-testid="stImage"]) { align-self: center; }
-.st-key-login [data-testid="stImage"] img {
-  width: clamp(136px, 40vw, 270px) !important; height: auto;
-}
-/* Logo + formulário no meio da tela, com o mesmo espaço em cima e embaixo.
+/* Logo + formulário formam um bloco de 420 px, no meio da tela.
    "safe center": se a tela for baixa demais, o conjunto começa no topo e a página rola. */
 [data-testid="stMainBlockContainer"]:has(.st-key-login) {
   min-height: 100dvh; box-sizing: border-box;
@@ -229,8 +224,31 @@
   display: flex; flex-direction: column;
 }
 [data-testid="stMainBlockContainer"]:has(.st-key-login) > [data-testid="stVerticalBlock"] { justify-content: safe center; }
-/* Formulário com 420 px no computador; no celular ocupa a largura da tela. */
-.st-key-login { width: 100%; max-width: 420px; align-self: center; }
+.st-key-login { width: 100%; max-width: 420px; align-self: center; gap: 0.4rem; }
+/* Letreiro centralizado, um pouco menor que o do chat. */
+.st-key-login [data-testid="stElementContainer"]:has([data-testid="stImage"]) { align-self: center; }
+.st-key-login [data-testid="stImage"] img {
+  width: clamp(136px, 40vw, 240px) !important; height: auto;
+}
+/* Cartão do formulário no estilo dos balões do assistente. */
+.st-key-login [data-testid="stForm"] {
+  background: var(--balao-assistente);
+  border: 1px solid var(--borda-assistente);
+  border-radius: 18px;
+  padding: 22px 24px 24px;
+  box-shadow: 0 8px 22px rgba(72, 41, 96, 0.08);
+}
+.instrucao-login { text-align: center; color: var(--cor-hora); font-size: 0.9rem; margin: 0 0 0.2rem; }
+.st-key-login [data-testid="stWidgetLabel"] p { font-size: 0.88rem; }
+.st-key-login [data-testid="stTextInputRootElement"] {
+  height: 44px; background: var(--fundo-caixa); border: 1px solid var(--borda-assistente);
+}
+/* Botão "Entrar": ação principal, roxo e arredondado como o botão de enviar do chat. */
+.st-key-login [data-testid="stFormSubmitButton"] button {
+  min-height: 44px; margin-top: 0.4rem;
+  background: var(--botao-enviar); color: #FFFFFF; border: none; border-radius: 999px;
+}
+.st-key-login [data-testid="stFormSubmitButton"] button:hover { filter: brightness(1.15); color: #FFFFFF; }
 /* Esconde a dica em inglês "Press Enter to submit form" dentro dos campos. */
 .st-key-login [data-testid="InputInstructions"] { display: none; }
 
