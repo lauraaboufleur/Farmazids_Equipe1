@@ -171,7 +171,8 @@ def pedir_login():
     if st.session_state.get("usuario"):
         return
     _, meio, _ = st.columns([1, 2, 1])
-    with meio:
+    # A chave "login" é usada no estilo.css (.st-key-login) para centralizar o letreiro.
+    with meio, st.container(key="login"):
         st.image(TITULO_ESCURO if modo_escuro() else TITULO)
         with st.form("login"):
             usuario = st.text_input("Usuário")

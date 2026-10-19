@@ -215,6 +215,15 @@
 [data-testid="stChatInput"]:has(textarea:disabled) { opacity: 0.7; border-style: dashed; }
 [data-testid="stChatInputSubmitButton"] svg { display: none; }
 
+/* ---------- Tela de login ---------- */
+/* Letreiro centralizado sobre o formulário, do mesmo tamanho do letreiro do chat. */
+.st-key-login [data-testid="stElementContainer"]:has([data-testid="stImage"]) { align-self: center; }
+.st-key-login [data-testid="stImage"] img {
+  width: clamp(136px, 40vw, 270px) !important; height: auto;
+}
+/* Esconde a dica em inglês "Press Enter to submit form" dentro dos campos. */
+.st-key-login [data-testid="InputInstructions"] { display: none; }
+
 /* ---------- Celular ---------- */
 @media (max-width: 640px) {
   [data-testid="stMainBlockContainer"] { padding-left: 0.8rem; padding-right: 0.8rem; padding-bottom: 6rem; }
