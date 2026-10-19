@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import altair as alt
 import pandas as pd
 import streamlit as st
 
@@ -43,6 +44,8 @@ NOMES_COLUNAS = {
     "preco": "Preço",
     "preco_medio": "Preço médio",
     "menor_preco": "Menor preço",
+    "menor_preco_pix": "Menor preço Pix",
+    "menor_preco_cartao": "Menor preço cartão",
     "maior_preco": "Maior preço",
     "em_estoque": "Estoque",
     "data_coleta": "Coleta",
@@ -88,6 +91,31 @@ SEGUNDOS_AVISO_DEMORA = 15
 TROCAS_NO_HISTORICO = 3
 CARACTERES_RESPOSTA = 300
 CARACTERES_SQL = 1500
+
+# Gráfico abaixo da tabela, quando a redigir-resposta sugere um.
+TIPOS_GRAFICO = {"barras", "linha"}
+SEM_ESTOQUE = 9999876  # "preço" que a São Paulo grava quando está fora de estoque: não entra no gráfico
+PEDIU_GRAFICO = re.compile(r"gr[áa]fico", re.IGNORECASE)
+# Cores da marca, uma por série (farmácia, Pix/cartão...). No modo escuro o
+# roxo some sobre o fundo, então a primeira cor vira um lilás claro.
+CORES_GRAFICO = {
+    "claro": {"series": ["#482960", "#C2A05A", "#8E6BAE", "#8C7340", "#B9A6CC"],
+              "texto": "#2E1F3E", "grade": "#E6DAEE"},
+    "escuro": {"series": ["#B79AD6", "#C2A05A", "#8E6BAE", "#E3CFA0", "#6E5A84"],
+               "texto": "#EDE6F2", "grade": "#3A2C4A"},
+}
+# Números e datas no padrão brasileiro dentro do gráfico (R$ 4,29 e 16/10/2026).
+IDIOMA_GRAFICO = alt.Locale(
+    number=alt.NumberLocale(decimal=",", thousands=".", grouping=[3], currency=["R$ ", ""]),
+    time=alt.TimeLocale(
+        dateTime="%A, %e de %B de %Y. %X", date="%d/%m/%Y", time="%H:%M:%S", periods=["AM", "PM"],
+        days=["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"],
+        shortDays=["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"],
+        months=["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto",
+                "Setembro", "Outubro", "Novembro", "Dezembro"],
+        shortMonths=["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"],
+    ),
+)
 
 # Cores das células da tabela no modo escuro. A tabela é desenhada pelo
 # Streamlit, sem passar pelo CSS, então a cor vai pelo Styler. A linha de
@@ -228,6 +256,97 @@ def montar_tabela(colunas, linhas):
     return estilo
 
 
+# ---------- Gráfico ----------
+def dados_do_grafico(sugestao, colunas, linhas):
+    """Confere a sugestão de gráfico e monta os pontos (uma linha por ponto:
+    x, série e valor). Devolve None se algo não servir: coluna que não existe,
+    valor que não é número, data que não é data, menos de 2 pontos."""
+    if not isinstance(sugestao, dict) or sugestao.get("tipo") not in TIPOS_GRAFICO:
+        return None
+    x, ys, serie = sugestao.get("x"), sugestao.get("y") or [], sugestao.get("serie")
+    if x not in colunas or not ys or any(y not in colunas or y == x for y in ys):
+        return None
+    if len(ys) > 1 or serie not in colunas or serie == x or serie in ys:
+        serie = None  # várias colunas de valores já viram várias séries
+
+    tabela = pd.DataFrame(linhas, columns=colunas).astype(object).map(lambda v: None if vazio(v) else v)
+    if sugestao["tipo"] == "linha":
+        # "mixed": aceita data sozinha e data com hora na mesma coluna.
+        eixo_x = pd.to_datetime(tabela[x], errors="coerce", format="mixed")
+        if eixo_x.isna().any():
+            return None
+    elif x.lower() == "farmacia":
+        eixo_x = tabela[x].map(lambda v: NOMES_FARMACIAS.get(str(v).lower(), v))
+    else:
+        eixo_x = tabela[x].astype(str)
+
+    pontos = []
+    for y in ys:
+        valores = pd.to_numeric(tabela[y], errors="coerce")
+        if valores.notna().sum() != tabela[y].notna().sum():
+            return None  # tem texto no meio dos valores
+        if serie:
+            nomes_series = tabela[serie].map(lambda v: NOMES_FARMACIAS.get(str(v).lower(), str(v)))
+        else:
+            nomes_series = pd.Series(nome_coluna(y), index=tabela.index)
+        pontos.append(pd.DataFrame({"x": eixo_x, "serie": nomes_series, "valor": valores}))
+    pontos = pd.concat(pontos, ignore_index=True).dropna(subset=["x", "valor"])
+    pontos = pontos[pontos["valor"] != SEM_ESTOQUE]
+    return pontos if len(pontos) >= 2 else None
+
+
+def montar_grafico(mensagem):
+    """Gráfico de barras ou de linha com as cores da Farmazids. Devolve None
+    quando não há gráfico para mostrar; nunca dá erro na tela."""
+    sugestao = mensagem.get("grafico")
+    try:
+        pontos = dados_do_grafico(sugestao, mensagem.get("colunas") or [], mensagem.get("linhas") or [])
+    except Exception as erro:
+        print(f"[chatbot] gráfico ignorado: {erro!r}")
+        return None
+    if pontos is None:
+        return None
+
+    cores = CORES_GRAFICO["escuro" if modo_escuro() else "claro"]
+    em_dinheiro = any("preco" in y.lower() or "valor" in y.lower() for y in sugestao["y"])
+    titulo_y = nome_coluna(sugestao["y"][0]) if len(sugestao["y"]) == 1 else ("Preço" if em_dinheiro else "Valor")
+    formato = "$,.2f" if em_dinheiro else ",.0f" if (pontos["valor"] % 1 == 0).all() else ",.2f"
+    titulo_x = nome_coluna(sugestao["x"])
+    uma_serie = pontos["serie"].nunique() == 1
+
+    cor = alt.Color("serie:N", title=None, scale=alt.Scale(range=cores["series"]),
+                    legend=None if uma_serie else alt.Legend(orient="bottom"))
+    valor = alt.Y("valor:Q", title=titulo_y, axis=alt.Axis(format=formato, titlePadding=14))
+    dica_valor = alt.Tooltip("valor:Q", title=titulo_y, format=formato)
+    if sugestao["tipo"] == "linha":
+        # Pontos grandes: fica mais fácil parar o mouse em cima e ver o valor.
+        grafico = alt.Chart(pontos).mark_line(point=alt.OverlayMarkDef(size=80), strokeWidth=2.5).encode(
+            x=alt.X("x:T", title=titulo_x, axis=alt.Axis(format="%d/%m")),
+            y=valor.scale(zero=False),
+            color=cor,
+            tooltip=[alt.Tooltip("x:T", title=titulo_x, format="%d/%m/%Y"),
+                     alt.Tooltip("serie:N", title="Série"), dica_valor],
+        )
+    else:
+        muitos = pontos["x"].nunique() > 5
+        grafico = alt.Chart(pontos).mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3).encode(
+            x=alt.X("x:N", title=titulo_x, sort=None,
+                    axis=alt.Axis(labelAngle=-35 if muitos else 0, labelLimit=160)),
+            xOffset=alt.XOffset("serie:N"),
+            y=valor,
+            color=cor,
+            tooltip=[alt.Tooltip("x:N", title=titulo_x), alt.Tooltip("serie:N", title="Série"), dica_valor],
+        )
+    return (
+        grafico.properties(height=280)
+        .configure(background="transparent", font="Lora", locale=IDIOMA_GRAFICO)
+        .configure_axis(labelColor=cores["texto"], titleColor=cores["texto"], gridColor=cores["grade"],
+                        domainColor=cores["grade"], tickColor=cores["grade"])
+        .configure_legend(labelColor=cores["texto"])
+        .configure_view(strokeWidth=0)
+    )
+
+
 # ---------- Mensagens ----------
 def limpar_texto(texto):
     """Ajustes no texto do Bedrock antes de mostrar.
@@ -264,6 +383,12 @@ def mostrar(mensagem, chave):
                     width="stretch",
                     column_config=LARGURAS,
                 )
+                grafico = montar_grafico(mensagem)
+                if grafico is not None:
+                    # Recolhido, a não ser que a pergunta tenha pedido gráfico.
+                    with st.expander("Ver gráfico", expanded=mensagem.get("grafico_aberto", False),
+                                     icon=":material/bar_chart:", key=f"grafico-{chave}"):
+                        st.altair_chart(grafico, theme=None, width="stretch")
             st.markdown(rodape(mensagem), unsafe_allow_html=True)
 
 
@@ -392,6 +517,9 @@ if st.session_state.pendente:
         "ok": resultado["ok"],
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
+        "grafico": resultado.get("grafico"),  # sugestão de gráfico; a tela confere antes de desenhar
+        "grafico_aberto": bool((resultado.get("grafico") or {}).get("pedido")
+                               or PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

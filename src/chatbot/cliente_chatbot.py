@@ -57,7 +57,8 @@ def _falha(mensagem, detalhe=None):
     # nunca para a tela do usuário.
     if detalhe:
         print(f"[chatbot] erro: {detalhe}")
-    return {"ok": False, "resposta": mensagem, "sql": None, "colunas": [], "linhas": [], "tipo": None}
+    return {"ok": False, "resposta": mensagem, "sql": None, "colunas": [], "linhas": [], "tipo": None,
+            "grafico": None}
 
 
 def _normalizar(pergunta):
@@ -117,6 +118,28 @@ def _cliente_step_functions():
 def _perguntar_simulado(pergunta, historico):
     time.sleep(1.5)  # imita o tempo de resposta do backend
     contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
+    pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
+    if "evolu" in pergunta.lower():
+        # Para testar o gráfico de linha: menor preço por coleta em três farmácias.
+        datas = ["2026-10-06", "2026-10-08", "2026-10-10", "2026-10-12", "2026-10-14", "2026-10-16"]
+        precos = {"farmaponte": [4.59, 4.49, 4.49, 4.39, 4.29, 4.29],
+                  "sao_joao": [4.39, 4.39, 4.29, 4.19, 4.19, 4.19],
+                  "sao_paulo": [5.10, 4.99, 4.99, 4.89, 4.79, 4.89]}
+        return {
+            "ok": True,
+            "resposta": f"(modo simulado) Evolução do menor preço Pix da dipirona{contexto}. O gráfico mostra "
+                        "o menor preço encontrado em cada coleta, entre vários produtos.",
+            "sql": "SELECT date(data_coleta) AS data_coleta, farmacia, MIN(preco_pix) AS menor_preco_pix\n"
+                   "FROM vw_precos_concorrentes\n"
+                   "WHERE lower(nome) LIKE '%dipirona%'\n"
+                   "GROUP BY 1, 2 ORDER BY 1 LIMIT 50",
+            "colunas": ["data_coleta", "farmacia", "menor_preco_pix"],
+            "linhas": [[data, farmacia, str(lista[i])] for farmacia, lista in precos.items()
+                       for i, data in enumerate(datas)],
+            "tipo": "dados",
+            "grafico": {"tipo": "linha", "x": "data_coleta", "y": ["menor_preco_pix"], "serie": "farmacia",
+                        "pedido": pediu_grafico},
+        }
     return {
         "ok": True,
         "resposta": f"(modo simulado) Você perguntou: \"{pergunta}\"{contexto}. "
@@ -131,8 +154,12 @@ def _perguntar_simulado(pergunta, historico):
             ["farmaponte", "Dipirona Monoidratada 500mg 10 Comprimidos", "4.29", "4.79", "true", "2026-10-16"],
             ["veracruz", "Dipirona Gotas 500mg/ml 20ml", "7.90", "8.49", "false", "2026-10-16"],
             ["sao_paulo", "Novalgina 1g 10 Comprimidos", "21.99", "23.90", "true", "2026-10-16"],
+            ["sao_paulo", "Dipirona 1g 10 Comprimidos", "9999876", "9999876", "false", "2026-10-16"],
         ],
         "tipo": "dados",
+        # O 9999876 (fora de estoque na São Paulo) está aí de propósito: a tela tira do gráfico.
+        "grafico": {"tipo": "barras", "x": "farmacia", "y": ["preco_pix", "preco_cartao"], "serie": None,
+                    "pedido": pediu_grafico},
     }
 
 
@@ -164,6 +191,8 @@ def _perguntar_aws(pergunta, historico):
         "linhas": saida.get("linhas") or [],
         # "dados", "teorica" ou "sem_dados". A máquina antiga não manda: fica None.
         "tipo": saida.get("tipo"),
+        # Sugestão de gráfico da redigir-resposta. A máquina antiga não manda: fica None.
+        "grafico": saida.get("grafico"),
     }
 
 
@@ -171,7 +200,7 @@ def perguntar(pergunta, historico=None):
     """Recebe a pergunta e o histórico (lista de {"pergunta", "resposta", "sql"},
     da troca mais antiga para a mais recente; vazio na primeira pergunta) e
     devolve sempre as mesmas chaves:
-    ok, resposta, sql, colunas, linhas, tipo, duracao (segundos) e do_cache."""
+    ok, resposta, sql, colunas, linhas, tipo, grafico, duracao (segundos) e do_cache."""
     inicio = time.perf_counter()
     pergunta = (pergunta or "").strip()
     historico = historico or []

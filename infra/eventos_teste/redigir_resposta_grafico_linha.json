@@ -1,0 +1,60 @@
+{
+  "pergunta": "como evoluiu o preço da dipirona?",
+  "colunas": [
+    "data_coleta",
+    "farmacia",
+    "menor_preco_pix"
+  ],
+  "linhas": [
+    [
+      "2026-10-08",
+      "farmaponte",
+      "4.49"
+    ],
+    [
+      "2026-10-10",
+      "farmaponte",
+      "4.49"
+    ],
+    [
+      "2026-10-12",
+      "farmaponte",
+      "4.39"
+    ],
+    [
+      "2026-10-14",
+      "farmaponte",
+      "4.29"
+    ],
+    [
+      "2026-10-16",
+      "farmaponte",
+      "4.29"
+    ],
+    [
+      "2026-10-08",
+      "sao_joao",
+      "4.39"
+    ],
+    [
+      "2026-10-10",
+      "sao_joao",
+      "4.29"
+    ],
+    [
+      "2026-10-12",
+      "sao_joao",
+      "4.19"
+    ],
+    [
+      "2026-10-14",
+      "sao_joao",
+      "4.19"
+    ],
+    [
+      "2026-10-16",
+      "sao_joao",
+      "4.19"
+    ]
+  ]
+}

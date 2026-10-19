@@ -131,6 +131,15 @@
   font-family: inherit !important; font-size: inherit !important; color: var(--negrito-assistente) !important;
   background: transparent !important; padding: 0 !important; border: none !important; font-weight: 600;
 }
+/* "Ver gráfico" abaixo da tabela: caixa discreta, nas cores do balão (claro e escuro). */
+[class*="-assistant"] [data-testid="stExpander"] details {
+  border: 1px solid var(--borda-assistente); border-radius: 12px; background: transparent;
+}
+[class*="-assistant"] [data-testid="stExpander"] summary,
+[class*="-assistant"] [data-testid="stExpander"] summary [data-testid="stIconMaterial"] {
+  color: var(--texto-assistente); font-weight: 600; background: transparent;
+}
+[class*="-assistant"] [data-testid="stExpander"] summary:hover { color: var(--cor-lema); }
 
 /* Balão do usuário: creme com borda dourada, à direita */
 [class*="-user"] [data-testid="stChatMessage"] { flex-direction: row-reverse; }

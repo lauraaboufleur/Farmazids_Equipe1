@@ -1,0 +1,17 @@
+{
+  "pergunta": "quais produtos de dipirona a FarmaPonte vende?",
+  "colunas": [
+    "nome"
+  ],
+  "linhas": [
+    [
+      "Dipirona Monoidratada 500mg 10 Comprimidos"
+    ],
+    [
+      "Dipirona Gotas 500mg/ml 20ml"
+    ],
+    [
+      "Dipirona 1g 10 Comprimidos"
+    ]
+  ]
+}

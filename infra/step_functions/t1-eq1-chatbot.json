@@ -110,7 +110,8 @@
         "colunas": [],
         "linhas": [],
         "mb_lidos": 0,
-        "tipo": "sem_dados"
+        "tipo": "sem_dados",
+        "grafico": null
       },
       "End": true
     },
@@ -163,7 +164,8 @@
         "colunas": [],
         "linhas": [],
         "mb_lidos": 0,
-        "tipo": "teorica"
+        "tipo": "teorica",
+        "grafico": null
       },
       "End": true
     },
@@ -314,7 +316,8 @@
         }
       },
       "ResultSelector": {
-        "resposta.$": "$.Payload.resposta"
+        "resposta.$": "$.Payload.resposta",
+        "grafico.$": "$.Payload.grafico"
       },
       "ResultPath": "$.final",
       "Retry": [
@@ -350,7 +353,8 @@
         "colunas.$": "$.resultado.colunas",
         "linhas.$": "$.resultado.linhas",
         "mb_lidos.$": "$.resultado.mb_lidos",
-        "tipo": "dados"
+        "tipo": "dados",
+        "grafico.$": "$.final.grafico"
       },
       "End": true
     },
