@@ -137,8 +137,9 @@ def _perguntar_simulado(pergunta, historico):
             "linhas": [[data, farmacia, str(lista[i])] for farmacia, lista in precos.items()
                        for i, data in enumerate(datas)],
             "tipo": "dados",
+            # Como na redigir-resposta: só há gráfico quando a pergunta pede.
             "grafico": {"tipo": "linha", "x": "data_coleta", "y": ["menor_preco_pix"], "serie": "farmacia",
-                        "pedido": pediu_grafico},
+                        "pedido": True} if pediu_grafico else None,
         }
     return {
         "ok": True,
@@ -165,7 +166,7 @@ def _perguntar_simulado(pergunta, historico):
         # menor preço de cada uma, nunca a soma. O 9999876 (fora de estoque na
         # São Paulo) está aí de propósito: a tela tira do gráfico.
         "grafico": {"tipo": "barras", "x": "farmacia", "y": ["preco_pix", "preco_cartao"], "serie": None,
-                    "pedido": pediu_grafico},
+                    "pedido": True} if pediu_grafico else None,
     }
 
 

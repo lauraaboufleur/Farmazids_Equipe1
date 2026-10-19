@@ -7,10 +7,13 @@ Recebe:  {"pergunta": "...", "colunas": ["..."], "linhas": [[...], ...], "histor
 Devolve: {"resposta": "...", "grafico": {...} ou null}
          grafico é a sugestão de gráfico para a tela:
          {"tipo": "barras" | "linha", "x": coluna, "y": [colunas de valores],
-          "serie": coluna que separa as linhas (ou null), "pedido": true se a
-          pergunta pediu gráfico}. A chave vem sempre, mesmo quando é null.
+          "serie": coluna que separa as linhas (ou null), "pedido": true}.
+         Só há gráfico quando a pergunta pede ("mostra em gráfico", "faz um
+         gráfico"...). Sem pedido, o modelo nem recebe as instruções de gráfico
+         (economiza tokens) e grafico vem null. A chave vem sempre.
 """
 import os
+import re
 
 import boto3
 from botocore.config import Config
@@ -22,6 +25,7 @@ LINHAS_NO_PROMPT = int(os.environ.get("LINHAS_NO_PROMPT", "100"))
 TROCAS_NO_HISTORICO = 3
 TIPOS_GRAFICO = {"barras", "linha"}
 MAXIMO_VALORES = 3  # quantas colunas de valores um gráfico pode ter
+PEDIU_GRAFICO = re.compile(r"gr[áa]fico", re.IGNORECASE)  # a tela confere com a mesma regra
 
 bedrock = boto3.client(
     "bedrock-runtime", region_name=REGION, config=Config(retries={"max_attempts": 4, "mode": "adaptive"})
@@ -41,57 +45,57 @@ SYSTEM = (
     "quanto custa?'), responda primeiro a parte dos dados e depois acrescente no máximo 2 frases gerais "
     "sobre o remédio, sem indicar dose, tratamento ou diagnóstico, terminando com: 'Para orientação "
     "sobre o seu caso, procure um farmacêutico ou médico.'\n\n"
-    "Gráfico: além da resposta, sugira um gráfico quando ele ajudar a entender o resultado.\n"
+    "Entregue sempre pela ferramenta responder."
+)
+
+# Só vai para o modelo quando a pergunta pede gráfico.
+INSTRUCOES_GRAFICO = (
+    "\n\nGráfico: a pergunta pediu um gráfico. Além da resposta, sugira o gráfico que melhor mostra o "
+    "resultado.\n"
     "- barras: comparação entre farmácias ou entre produtos (x = a coluna que nomeia cada barra, como "
     "farmacia; y = 1 a 3 colunas de valores, como preco_pix e preco_cartao).\n"
     "- linha: evolução ao longo das datas de coleta (x = a coluna de data; y = uma coluna de valor; "
     "serie = a coluna que separa as linhas, como farmacia, quando houver mais de uma).\n"
-    "- null: resultado de um valor só, menos de 2 linhas, lista de produtos sem comparação, ou quando "
-    "o gráfico não acrescenta nada.\n"
+    "- null: resultado de um valor só, menos de 2 linhas ou lista de produtos sem comparação. Nesse "
+    "caso, explique em uma frase na resposta por que não dá para mostrar em gráfico.\n"
     "- Use só nomes de colunas que aparecem no resultado, escritos exatamente como lá.\n"
-    "- pedido = true quando a pergunta pede gráfico explicitamente ('mostra em gráfico', 'faz um "
-    "gráfico', 'quero ver num gráfico'). Se pediu e o resultado não serve para gráfico, use null e "
-    "explique isso em uma frase na resposta.\n"
     "- Se sugerir barras e o resultado tiver várias linhas para o mesmo valor de x (ex.: vários produtos "
     "por farmácia), diga claramente na resposta que o gráfico compara o menor preço encontrado em cada "
     "farmácia (ou em cada valor de x). O gráfico nunca soma preços.\n"
     "- Se o resultado for o menor preço por coleta de uma busca genérica (ex.: coluna menor_preco_pix, "
     "sem um produto único), diga claramente na resposta que o gráfico mostra o menor preço encontrado "
-    "em cada coleta, entre vários produtos.\n"
-    "Entregue sempre pela ferramenta responder."
+    "em cada coleta, entre vários produtos."
 )
 
-# A ferramenta obriga o modelo a devolver a resposta e o gráfico separados,
-# já em JSON, sem precisar procurar o JSON no meio do texto.
-FERRAMENTA = {
-    "tools": [{
-        "toolSpec": {
-            "name": "responder",
-            "description": "Entrega a resposta para o usuário e a sugestão de gráfico.",
-            "inputSchema": {"json": {
-                "type": "object",
-                "properties": {
-                    "resposta": {"type": "string", "description": "Texto da resposta, em português."},
-                    "grafico": {
-                        "type": ["object", "null"],
-                        "description": "Sugestão de gráfico, ou null quando não fizer sentido.",
-                        "properties": {
-                            "tipo": {"type": "string", "enum": sorted(TIPOS_GRAFICO)},
-                            "x": {"type": "string"},
-                            "y": {"type": "array", "items": {"type": "string"}, "minItems": 1,
-                                  "maxItems": MAXIMO_VALORES},
-                            "serie": {"type": ["string", "null"]},
-                            "pedido": {"type": "boolean"},
-                        },
-                        "required": ["tipo", "x", "y", "pedido"],
-                    },
-                },
-                "required": ["resposta", "grafico"],
-            }},
-        }
-    }],
-    "toolChoice": {"tool": {"name": "responder"}},
+# A ferramenta obriga o modelo a devolver a resposta (e o gráfico, quando pedido)
+# separados, já em JSON, sem precisar procurar o JSON no meio do texto.
+RESPOSTA = {"type": "string", "description": "Texto da resposta, em português."}
+GRAFICO = {
+    "type": ["object", "null"],
+    "description": "Sugestão de gráfico, ou null quando o resultado não serve para gráfico.",
+    "properties": {
+        "tipo": {"type": "string", "enum": sorted(TIPOS_GRAFICO)},
+        "x": {"type": "string"},
+        "y": {"type": "array", "items": {"type": "string"}, "minItems": 1, "maxItems": MAXIMO_VALORES},
+        "serie": {"type": ["string", "null"]},
+    },
+    "required": ["tipo", "x", "y"],
 }
+
+
+def ferramenta(com_grafico):
+    """Sem pedido de gráfico, a ferramenta só tem a resposta."""
+    propriedades = {"resposta": RESPOSTA, "grafico": GRAFICO} if com_grafico else {"resposta": RESPOSTA}
+    descricao = "Entrega a resposta para o usuário" + (" e a sugestão de gráfico." if com_grafico else ".")
+    return {
+        "tools": [{"toolSpec": {
+            "name": "responder",
+            "description": descricao,
+            "inputSchema": {"json": {"type": "object", "properties": propriedades,
+                                     "required": sorted(propriedades)}},
+        }}],
+        "toolChoice": {"tool": {"name": "responder"}},
+    }
 
 
 def tabela_em_texto(colunas, linhas):
@@ -135,13 +139,14 @@ def validar_grafico(grafico, colunas, linhas):
     serie = coluna(grafico.get("serie"))
     if len(y) > 1 or serie in (x, *y):
         serie = None  # várias colunas de valores já viram várias séries
-    return {"tipo": tipo, "x": x, "y": y, "serie": serie, "pedido": bool(grafico.get("pedido"))}
+    return {"tipo": tipo, "x": x, "y": y, "serie": serie, "pedido": True}  # só há gráfico quando pedido
 
 
 def lambda_handler(event, context):
     colunas, linhas = event.get("colunas", []), event.get("linhas", [])
     historico = event.get("historico") or []
     rotulo = "Pergunta atual" if historico else "Pergunta"
+    pediu_grafico = bool(PEDIU_GRAFICO.search(event["pergunta"]))
     mensagem = (
         f"{texto_historico(historico)}"
         f"{rotulo}: {event['pergunta']}\n\n"
@@ -150,10 +155,10 @@ def lambda_handler(event, context):
     )
     resp = bedrock.converse(
         modelId=MODEL_ID,
-        system=[{"text": SYSTEM}],
+        system=[{"text": SYSTEM + (INSTRUCOES_GRAFICO if pediu_grafico else "")}],
         messages=[{"role": "user", "content": [{"text": mensagem}]}],
         inferenceConfig={"maxTokens": 4000},
-        toolConfig=FERRAMENTA,
+        toolConfig=ferramenta(pediu_grafico),
     )
     conteudo = resp["output"]["message"]["content"]
     entrada = next((b["toolUse"]["input"] for b in conteudo if "toolUse" in b), {})
@@ -161,4 +166,5 @@ def lambda_handler(event, context):
     texto = (entrada.get("resposta") or next((b["text"] for b in conteudo if "text" in b), "")).strip()
     if not texto:
         raise ValueError("O Bedrock não devolveu resposta.")  # a máquina tenta de novo (Retry)
-    return {"resposta": texto, "grafico": validar_grafico(entrada.get("grafico"), colunas, linhas)}
+    grafico = validar_grafico(entrada.get("grafico"), colunas, linhas) if pediu_grafico else None
+    return {"resposta": texto, "grafico": grafico}

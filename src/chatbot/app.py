@@ -93,7 +93,7 @@ TROCAS_NO_HISTORICO = 3
 CARACTERES_RESPOSTA = 300
 CARACTERES_SQL = 1500
 
-# Gráfico abaixo da tabela, quando a redigir-resposta sugere um.
+# Gráfico abaixo da tabela, só quando a pergunta pede e a redigir-resposta sugere um.
 TIPOS_GRAFICO = {"barras", "linha"}
 SEM_ESTOQUE = 9999876  # "preço" que a São Paulo grava quando está fora de estoque: não entra no gráfico
 PEDIU_GRAFICO = re.compile(r"gr[áa]fico", re.IGNORECASE)
@@ -445,10 +445,10 @@ def mostrar(mensagem, chave):
                     width="stretch",
                     column_config=LARGURAS,
                 )
-                grafico = montar_grafico(mensagem)
+                # Gráfico só quando a pergunta pediu; aí ele já aparece aberto.
+                grafico = montar_grafico(mensagem) if mensagem.get("pediu_grafico") else None
                 if grafico is not None:
-                    # Recolhido, a não ser que a pergunta tenha pedido gráfico.
-                    with st.expander("Ver gráfico", expanded=mensagem.get("grafico_aberto", False),
+                    with st.expander("Ver gráfico", expanded=True,
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
             st.markdown(rodape(mensagem), unsafe_allow_html=True)
@@ -581,8 +581,8 @@ if st.session_state.pendente:
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
         "grafico": resultado.get("grafico"),  # sugestão de gráfico; a tela confere antes de desenhar
-        "grafico_aberto": bool((resultado.get("grafico") or {}).get("pedido")
-                               or PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
+        # Confere aqui também, pela palavra "gráfico" na pergunta: sem ela, nada de gráfico.
+        "pediu_grafico": bool(PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),
