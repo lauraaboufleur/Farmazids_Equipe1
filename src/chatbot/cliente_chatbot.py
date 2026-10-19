@@ -17,6 +17,10 @@ Dois cuidados com o tempo de resposta:
 - respostas certas ficam guardadas por alguns minutos. Se alguém repetir a
   mesma pergunta, ela volta na hora, sem chamar Bedrock e Athena de novo.
   Como a coleta só roda a cada dois dias, isso não deixa os dados velhos.
+
+Memória da conversa: junto com a pergunta vai o histórico das últimas trocas
+(pergunta, resposta resumida e SQL usado), montado pela tela. O SQL serve só
+para o backend entender perguntas como "e na São João?"; nunca vai para a tela.
 """
 
 import json
@@ -42,7 +46,7 @@ MENSAGENS_ERRO = {
 }
 MENSAGEM_GENERICA = "Algo deu errado ao responder. Tente de novo em instantes."
 
-# Respostas guardadas: {pergunta normalizada: (momento em que foi guardada, resultado)}.
+# Respostas guardadas: {chave da pergunta: (momento em que foi guardada, resultado)}.
 # Fica na memória do processo, então vale para todas as pessoas usando o app.
 _cache = {}
 _trava_cache = threading.Lock()
@@ -59,6 +63,16 @@ def _falha(mensagem, detalhe=None):
 def _normalizar(pergunta):
     """"Qual o preço  da Dipirona?" e "qual o preço da dipirona" viram a mesma chave."""
     return " ".join(pergunta.lower().split()).rstrip("?!. ")
+
+
+def _chave_cache(pergunta, historico):
+    """A mesma pergunta pode ter respostas diferentes conforme a conversa:
+    "e na São João?" depois de dipirona não é o mesmo que depois de amoxicilina.
+    Por isso a chave leva também as perguntas e os SQLs anteriores. Sem
+    histórico, a chave é só a pergunta, como antes."""
+    partes = [_normalizar(troca["pergunta"]) + "\n" + " ".join((troca.get("sql") or "").lower().split())
+              for troca in historico]
+    return "\n--\n".join(partes + [_normalizar(pergunta)])
 
 
 def _buscar_no_cache(chave):
@@ -100,11 +114,12 @@ def _cliente_step_functions():
     return boto3.client("stepfunctions", region_name=REGIAO, config=config)
 
 
-def _perguntar_simulado(pergunta):
+def _perguntar_simulado(pergunta, historico):
     time.sleep(1.5)  # imita o tempo de resposta do backend
+    contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
     return {
         "ok": True,
-        "resposta": f"(modo simulado) Você perguntou: \"{pergunta}\". "
+        "resposta": f"(modo simulado) Você perguntou: \"{pergunta}\"{contexto}. "
                     "Quando o backend estiver ligado, a resposta de verdade aparece aqui.",
         "sql": "SELECT farmacia, nome, preco_pix, preco_cartao, em_estoque, data_coleta\n"
                "FROM vw_precos_concorrentes\n"
@@ -120,7 +135,7 @@ def _perguntar_simulado(pergunta):
     }
 
 
-def _perguntar_aws(pergunta):
+def _perguntar_aws(pergunta, historico):
     from botocore.exceptions import BotoCoreError, ClientError
 
     if not ARN_MAQUINA:
@@ -129,7 +144,7 @@ def _perguntar_aws(pergunta):
     try:
         execucao = _cliente_step_functions().start_sync_execution(
             stateMachineArn=ARN_MAQUINA,
-            input=json.dumps({"pergunta": pergunta}, ensure_ascii=False),
+            input=json.dumps({"pergunta": pergunta, "historico": historico}, ensure_ascii=False),
         )
     except (BotoCoreError, ClientError) as erro:
         return _falha(MENSAGENS_ERRO["ErroServico"], str(erro))
@@ -149,27 +164,35 @@ def _perguntar_aws(pergunta):
     }
 
 
-def perguntar(pergunta):
-    """Recebe a pergunta e devolve sempre as mesmas chaves:
+def perguntar(pergunta, historico=None):
+    """Recebe a pergunta e o histórico (lista de {"pergunta", "resposta", "sql"},
+    da troca mais antiga para a mais recente; vazio na primeira pergunta) e
+    devolve sempre as mesmas chaves:
     ok, resposta, sql, colunas, linhas, duracao (segundos) e do_cache."""
     inicio = time.perf_counter()
     pergunta = (pergunta or "").strip()
+    historico = historico or []
     if not pergunta:
         resultado = _falha("Escreva uma pergunta.")
     elif len(pergunta) > TAMANHO_MAXIMO_PERGUNTA:
         resultado = _falha(f"A pergunta pode ter no máximo {TAMANHO_MAXIMO_PERGUNTA} caracteres.")
     else:
-        chave = _normalizar(pergunta)
+        chave = _chave_cache(pergunta, historico)
         guardado = _buscar_no_cache(chave)
         if guardado is not None:
             guardado["do_cache"] = True
             guardado["duracao"] = time.perf_counter() - inicio
             return guardado
-        resultado = _perguntar_simulado(pergunta) if MODO_SIMULADO else _perguntar_aws(pergunta)
+        if MODO_SIMULADO:
+            resultado = _perguntar_simulado(pergunta, historico)
+        else:
+            resultado = _perguntar_aws(pergunta, historico)
         _guardar_no_cache(chave, resultado)
 
     resultado["do_cache"] = False
     resultado["duracao"] = time.perf_counter() - inicio
     # Fica no log (terminal ou "Manage app" no Streamlit Cloud): ajuda a medir o tempo real.
-    print(f"[chatbot] {resultado['duracao']:.1f} s | ok={resultado['ok']} | {pergunta[:60]}")
+    # O SQL não entra no log.
+    print(f"[chatbot] {resultado['duracao']:.1f} s | ok={resultado['ok']} | "
+          f"historico={len(historico)} | {pergunta[:60]}")
     return resultado

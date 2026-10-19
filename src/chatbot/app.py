@@ -83,6 +83,12 @@ BOAS_VINDAS = (
 # Depois desse tempo, o balão de espera explica por que está demorando.
 SEGUNDOS_AVISO_DEMORA = 15
 
+# Memória da conversa: quantas trocas anteriores vão junto com a pergunta e o
+# tamanho máximo de cada parte. Texto curto para não deixar a resposta lenta.
+TROCAS_NO_HISTORICO = 3
+CARACTERES_RESPOSTA = 300
+CARACTERES_SQL = 1500
+
 # Cores das células da tabela no modo escuro. A tabela é desenhada pelo
 # Streamlit, sem passar pelo CSS, então a cor vai pelo Styler. A linha de
 # títulos não aceita cor pelo Styler e continua lilás clara.
@@ -270,7 +276,25 @@ def texto_espera(segundos):
     return pontos + texto
 
 
-def responder(pergunta):
+def montar_historico(mensagens):
+    """Últimas trocas que deram certo, para o backend entender perguntas de
+    continuação ("e na São João?"). Vai a pergunta, o começo da resposta e o
+    SQL usado; a tabela não vai. Erros e respostas sem SQL ("não encontrei nos
+    dados") ficam de fora.
+    O SQL fica guardado nas mensagens só para isso: nunca aparece na tela."""
+    trocas = []
+    for anterior, mensagem in zip(mensagens, mensagens[1:]):
+        if (anterior["papel"] == "user" and mensagem["papel"] == "assistant"
+                and mensagem.get("ok") and mensagem.get("sql")):
+            trocas.append({
+                "pergunta": anterior["texto"],
+                "resposta": " ".join(mensagem["texto"].split())[:CARACTERES_RESPOSTA],
+                "sql": mensagem["sql"][:CARACTERES_SQL],
+            })
+    return trocas[-TROCAS_NO_HISTORICO:]
+
+
+def responder(pergunta, historico):
     """Chama o backend numa thread separada e, enquanto isso, atualiza o
     cronômetro do balão de espera a cada meio segundo."""
     espera = st.empty()
@@ -280,7 +304,7 @@ def responder(pergunta):
 
     inicio = time.perf_counter()
     with ThreadPoolExecutor(max_workers=1) as executor:
-        tarefa = executor.submit(perguntar, pergunta)
+        tarefa = executor.submit(perguntar, pergunta, historico)
         while not tarefa.done():
             area_texto.markdown(texto_espera(int(time.perf_counter() - inicio)), unsafe_allow_html=True)
             time.sleep(0.5)
@@ -351,7 +375,9 @@ if nova:
 
 if st.session_state.pendente:
     try:
-        resultado = responder(st.session_state.pendente)
+        # A última mensagem é a própria pergunta pendente: fica fora do histórico.
+        historico = montar_historico(st.session_state.mensagens[:-1])
+        resultado = responder(st.session_state.pendente, historico)
     except Exception as erro:  # nunca deixar a caixa bloqueada para sempre
         print(f"[chatbot] erro inesperado: {erro!r}")
         resultado = {"ok": False, "resposta": "Algo deu errado ao responder. Tente de novo em instantes.",
@@ -362,7 +388,8 @@ if st.session_state.pendente:
     st.session_state.mensagens.append({
         "papel": "assistant",
         "texto": resultado["resposta"],
-        "sql": resultado["sql"],
+        "ok": resultado["ok"],
+        "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

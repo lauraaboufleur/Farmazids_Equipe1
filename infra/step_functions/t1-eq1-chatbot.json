@@ -1,12 +1,33 @@
 {
   "Comment": "Chatbot Farmazids: pergunta -> SQL -> validação -> Athena -> resposta",
   "QueryLanguage": "JSONPath",
-  "StartAt": "Inicializar",
+  "StartAt": "TemHistorico",
   "States": {
+    "TemHistorico": {
+      "Type": "Choice",
+      "Comment": "Quem chama sem historico (site antigo) segue com a lista vazia, como antes.",
+      "Choices": [
+        {
+          "Variable": "$.historico",
+          "IsPresent": true,
+          "Next": "Inicializar"
+        }
+      ],
+      "Default": "SemHistorico"
+    },
+    "SemHistorico": {
+      "Type": "Pass",
+      "Parameters": {
+        "pergunta.$": "$.pergunta",
+        "historico": []
+      },
+      "Next": "Inicializar"
+    },
     "Inicializar": {
       "Type": "Pass",
       "Parameters": {
         "pergunta.$": "$.pergunta",
+        "historico.$": "$.historico",
         "tentativas": 0,
         "erro_anterior": null
       },
@@ -20,7 +41,8 @@
         "FunctionName": "t1-eq1-gerar-sql",
         "Payload": {
           "pergunta.$": "$.pergunta",
-          "erro_anterior.$": "$.erro_anterior"
+          "erro_anterior.$": "$.erro_anterior",
+          "historico.$": "$.historico"
         }
       },
       "ResultSelector": {
@@ -56,6 +78,7 @@
       "Type": "Pass",
       "Parameters": {
         "pergunta.$": "$.pergunta",
+        "historico.$": "$.historico",
         "geracao.$": "$.geracao",
         "erro_anterior.$": "$.erro_anterior",
         "tentativas.$": "States.MathAdd($.tentativas, 1)"
@@ -144,6 +167,7 @@
       "Comment": "Manda de volta o SQL reprovado e o motivo, para o agente corrigir.",
       "Parameters": {
         "pergunta.$": "$.pergunta",
+        "historico.$": "$.historico",
         "tentativas.$": "$.tentativas",
         "erro_anterior.$": "States.Format('SQL: {}\nErro: {}', $.geracao.sql, $.validacao.erro)"
       },
@@ -211,6 +235,7 @@
       "Comment": "Manda de volta o SQL que o Athena recusou e o motivo, para o agente corrigir.",
       "Parameters": {
         "pergunta.$": "$.pergunta",
+        "historico.$": "$.historico",
         "tentativas.$": "$.tentativas",
         "erro_anterior.$": "States.Format('SQL: {}\nErro do Athena: {}', $.geracao.sql, $.resultado.erro)"
       },
@@ -224,6 +249,7 @@
         "FunctionName": "t1-eq1-redigir-resposta",
         "Payload": {
           "pergunta.$": "$.pergunta",
+          "historico.$": "$.historico",
           "colunas.$": "$.resultado.colunas",
           "linhas.$": "$.resultado.linhas"
         }

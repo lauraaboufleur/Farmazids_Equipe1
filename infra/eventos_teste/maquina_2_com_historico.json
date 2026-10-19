@@ -1,0 +1,10 @@
+{
+  "pergunta": "e na São João?",
+  "historico": [
+    {
+      "pergunta": "qual o preço da dipirona na FarmaPonte?",
+      "resposta": "<cole aqui os primeiros 300 caracteres da resposta da execução 1>",
+      "sql": "<cole aqui o sql da execução 1>"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "pergunta": "e na São João?",
+  "colunas": [
+    "farmacia",
+    "nome",
+    "preco_pix",
+    "preco_cartao",
+    "em_estoque",
+    "data_coleta"
+  ],
+  "linhas": [
+    [
+      "sao_joao",
+      "Dipirona Monoidratada 500mg 10 Comprimidos",
+      "4.19",
+      "4.49",
+      "true",
+      "2026-10-16 15:47:43"
+    ]
+  ],
+  "historico": [
+    {
+      "pergunta": "qual o preço da dipirona na FarmaPonte?",
+      "resposta": "Na Farmaponte, a Dipirona Monoidratada 500mg com 10 comprimidos custa R$ 4,29 no Pix e R$ 4,79 no cartão.",
+      "sql": "SELECT farmacia, nome, preco_pix, preco_cartao, em_estoque, data_coleta FROM vw_precos_concorrentes WHERE LOWER(farmacia) = 'farmaponte' AND LOWER(nome) LIKE '%dipirona%' ORDER BY data_coleta DESC LIMIT 20"
+    }
+  ]
+}

@@ -1,6 +1,9 @@
 """Agente 1 - Gerar SQL.
 
-Recebe:  {"pergunta": "...", "erro_anterior": ""}   (erro_anterior vazio na 1ª vez)
+Recebe:  {"pergunta": "...", "erro_anterior": "", "historico": [...]}
+         erro_anterior vem vazio na 1ª vez. historico é opcional: lista de
+         {"pergunta", "resposta", "sql"} das últimas trocas, da mais antiga para
+         a mais recente. Sem histórico, funciona como antes.
 Devolve: {"sql": "..."}
 Se a pergunta não puder ser respondida com as tabelas, devolve {"sql": "CANNOT_ANSWER"}.
 """
@@ -19,6 +22,8 @@ ALLOWED_TABLES = {
     for t in os.environ.get("ALLOWED_TABLES", "vw_medicamentos,vw_precos_concorrentes,vw_vendas").split(",")
     if t.strip()
 }
+# A tela já manda no máximo 3 trocas; o corte aqui é só uma garantia.
+TROCAS_NO_HISTORICO = 3
 
 _retry = Config(retries={"max_attempts": 4, "mode": "adaptive"})
 glue = boto3.client("glue", region_name=REGION, config=_retry)
@@ -70,9 +75,12 @@ def system_prompt():
         f"Views:\n{carregar_schema()}\n\n"
         "Regras:\n"
         "- Gere uma única consulta SELECT (ou WITH ... SELECT), somente leitura.\n"
-        "- Sempre termine com LIMIT (no máximo 200).\n"
+        "- Sempre termine com LIMIT (no máximo 50).\n"
         "- Quando a tabela tiver partições, filtre por elas sempre que a pergunta permitir.\n"
         "- Responda APENAS com o SQL, sem explicações e sem blocos de código.\n"
+        "- Se vier uma conversa anterior e a pergunta atual for uma continuação (ex.: 'e na São João?', "
+        "'e o mais barato?'), reaproveite produto, filtros e colunas do SQL anterior e mude só o que a "
+        "pergunta pedir. Se for um assunto novo, ignore a conversa anterior.\n"
         "- Se a pergunta não puder ser respondida com essas views, responda exatamente CANNOT_ANSWER.\n\n"
         f"Sobre os dados:\n{DICAS_DADOS}"
     )
@@ -83,11 +91,25 @@ def limpar_sql(texto):
     return texto.strip().rstrip(";").strip()
 
 
+def texto_historico(historico):
+    """Conversa anterior para pôr antes da pergunta. Leva a pergunta e o SQL de
+    cada troca (a resposta não ajuda a montar o SQL). Vazio se não houver histórico."""
+    if not historico:
+        return ""
+    linhas = ["Conversa anterior (da mais antiga para a mais recente):"]
+    for numero, troca in enumerate(historico[-TROCAS_NO_HISTORICO:], start=1):
+        linhas.append(f"{numero}. Pergunta: {troca.get('pergunta', '')}")
+        if troca.get("sql"):
+            linhas.append(f"   SQL usado: {troca['sql']}")
+    return "\n".join(linhas) + "\n\nPergunta atual: "
+
+
 def lambda_handler(event, context):
     pergunta = event["pergunta"]
     erro_anterior = event.get("erro_anterior") or ""
+    historico = event.get("historico") or []
 
-    mensagem = pergunta
+    mensagem = texto_historico(historico) + pergunta
     if erro_anterior:
         mensagem += f"\n\nA tentativa anterior foi reprovada:\n{erro_anterior}\n\nCorrija o SQL."
 
