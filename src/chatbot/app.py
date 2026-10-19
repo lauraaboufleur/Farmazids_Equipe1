@@ -9,6 +9,7 @@ imagens em assets/. Este arquivo só monta a tela e conversa com o backend.
 """
 
 import base64
+import hmac
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -153,6 +154,42 @@ def aplicar_estilo():
     if modo_escuro():
         css += "\n" + (ASSETS / "estilo-escuro.css").read_text(encoding="utf-8")
     st.html(f"<style>{variaveis}\n{css}</style>")
+
+
+# ---------- Login ----------
+# Por enquanto, qualquer usuário e qualquer senha entram. Para valer as senhas
+# do st.secrets, troque para False.
+ACEITAR_QUALQUER_LOGIN = True
+
+
+def senha_confere(usuario, senha):
+    """Os usuários e senhas ficam em st.secrets, na seção [usuarios]
+    (arquivo .streamlit/secrets.toml no computador, ou Secrets no Community Cloud)."""
+    if ACEITAR_QUALQUER_LOGIN:
+        return True
+    usuarios = st.secrets.get("usuarios", {})
+    certa = usuarios.get(usuario)
+    # compare_digest compara sem "vazar" pelo tempo quantas letras acertou.
+    return certa is not None and hmac.compare_digest(str(senha), str(certa))
+
+
+def pedir_login():
+    """Mostra a tela de login e para o app aqui até a pessoa entrar."""
+    if st.session_state.get("usuario"):
+        return
+    _, meio, _ = st.columns([1, 2, 1])
+    with meio:
+        st.image(TITULO_ESCURO if modo_escuro() else TITULO)
+        with st.form("login"):
+            usuario = st.text_input("Usuário")
+            senha = st.text_input("Senha", type="password")
+            entrar = st.form_submit_button("Entrar", width="stretch")
+        if entrar:
+            if senha_confere(usuario.strip(), senha):
+                st.session_state.usuario = usuario.strip() or "visitante"
+                st.rerun()
+            st.error("Usuário ou senha incorretos.")
+    st.stop()
 
 
 # ---------- Tabela ----------
@@ -482,6 +519,7 @@ if "pendente" not in st.session_state:
     st.session_state.pendente = None  # pergunta esperando resposta
 
 aplicar_estilo()
+pedir_login()
 
 # ---------- Cabeçalho (fica fixo no topo: ver .st-key-cabecalho no estilo.css) ----------
 with st.container(key="cabecalho"):
