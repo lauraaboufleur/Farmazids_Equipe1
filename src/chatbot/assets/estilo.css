@@ -58,11 +58,11 @@
   border-bottom: 1px solid var(--linha-cabecalho);
   margin-bottom: 1.2rem;
 }
-/* Letreiro centralizado. A largura acompanha a tela: no máximo 340 px no
-   computador e cerca de metade da largura no celular. */
+/* Letreiro centralizado. A largura acompanha a tela: no máximo 270 px no
+   computador e cerca de 40% da largura no celular. */
 .st-key-cabecalho [data-testid="stElementContainer"]:has([data-testid="stImage"]) { align-self: center; }
 .st-key-cabecalho [data-testid="stImage"] img {
-  width: clamp(170px, 50vw, 340px) !important; height: auto;
+  width: clamp(136px, 40vw, 270px) !important; height: auto;
 }
 /* O lema fica no canto direito do cabeçalho, sem empurrar o letreiro. */
 .st-key-cabecalho [data-testid="stElementContainer"]:has(.lema) {
@@ -185,30 +185,30 @@
 
 /* ---------- Caixa de pergunta ---------- */
 [data-testid="stBottom"], [data-testid="stBottom"] > div, [data-testid="stBottomBlockContainer"] { background: transparent; }
-[data-testid="stBottomBlockContainer"] { max-width: 760px; padding-bottom: 1.6rem; }
+[data-testid="stBottomBlockContainer"] { max-width: 900px; margin: 0 auto; padding-bottom: 1.6rem; }
 [data-testid="stChatInput"] {
   position: relative;
   border: 1.5px solid var(--dourado);
   border-radius: 999px;
   background: var(--fundo-caixa);
   box-shadow: 0 8px 24px rgba(72, 41, 96, 0.10);
-  padding: 4px 8px 4px 72px;
+  padding: 0 6px 0 62px;
 }
-[data-testid="stChatInput"] > div { background: transparent; border: none; box-shadow: none; }
+[data-testid="stChatInput"] > div { background: transparent; border: none; box-shadow: none; padding-top: 7px; padding-bottom: 7px; }
 [data-testid="stChatInput"]::before {
-  content: ""; position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
-  width: 42px; height: 42px; border-radius: 50%;
+  content: ""; position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; border-radius: 50%;
   background: var(--pessoa) center / 58% no-repeat,
               radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
 }
 [data-testid="stChatInput"]::after {
-  content: ""; position: absolute; left: 64px; top: 22%; height: 56%;
+  content: ""; position: absolute; left: 56px; top: 22%; height: 56%;
   border-left: 1px solid var(--divisoria-caixa);
 }
 [data-testid="stChatInputTextArea"] { font-size: 1rem; }
 [data-testid="stChatInputSubmitButton"] {
-  width: 80px; height: 44px; border-radius: 999px;
-  background: var(--botao-enviar) var(--aviao) center / 23px no-repeat !important;
+  width: 68px; height: 36px; border-radius: 999px;
+  background: var(--botao-enviar) var(--aviao) center / 20px no-repeat !important;
 }
 [data-testid="stChatInputSubmitButton"]:disabled { opacity: 0.85; }
 /* Caixa bloqueada enquanto a resposta não chega */
@@ -232,9 +232,9 @@
   .st-key-msg-espera-assistant [data-testid="stChatMessageContent"] { min-width: 0; }
 
   [data-testid="stBottomBlockContainer"] { padding: 0 0.8rem 1rem; }
-  [data-testid="stChatInput"] { padding: 3px 6px 3px 52px; }
-  [data-testid="stChatInput"]::before { left: 9px; width: 34px; height: 34px; }
-  [data-testid="stChatInput"]::after { left: 48px; }
+  [data-testid="stChatInput"] { padding: 0 5px 0 48px; }
+  [data-testid="stChatInput"]::before { left: 8px; width: 30px; height: 30px; }
+  [data-testid="stChatInput"]::after { left: 44px; }
   [data-testid="stChatInputTextArea"] { font-size: 0.95rem; }
-  [data-testid="stChatInputSubmitButton"] { width: 54px; height: 38px; background-size: 19px !important; }
+  [data-testid="stChatInputSubmitButton"] { width: 50px; height: 32px; background-size: 17px !important; }
 }
