@@ -119,6 +119,32 @@ def _perguntar_simulado(pergunta, historico):
     time.sleep(1.5)  # imita o tempo de resposta do backend
     contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
     pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
+    if "compar" in pergunta.lower() or "barat" in pergunta.lower():
+        # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql.
+        return {
+            "ok": True,
+            "resposta": f"(modo simulado) Comparando pelo preço por comprimido{contexto}: na dipirona 1g, a "
+                        "Dipirona genérica da São João sai a R$ 0,445 por comprimido (caixa com 20), contra "
+                        "R$ 0,89 da Novalgina na FarmaPonte (caixa com 10).",
+            "sql": "WITH ultima AS (...) SELECT concentracao, forma, unidade, farmacia, ... LIMIT 50",
+            "colunas": ["farmacia", "produto", "preco_por_unidade", "preco", "quantidade", "concentracao", "forma",
+                        "unidade"],
+            "linhas": [
+                ["sao_joao", "Dipirona 1g 20 Comprimidos Genérico EMS", "0.445", "8.9", "20.0", "1000mg",
+                 "comprimido", "comprimido"],
+                ["farmazids", "Dipirona 1g 10 Comprimidos Medley", "0.69", "6.9", "10.0", "1000mg",
+                 "comprimido", "comprimido"],
+                ["farmaponte", "Novalgina 1g 10 Comprimidos", "0.89", "8.9", "10.0", "1000mg",
+                 "comprimido", "comprimido"],
+                ["veracruz", "Novalgina 1g 20 Comprimidos", "1.245", "24.9", "20.0", "1000mg",
+                 "comprimido", "comprimido"],
+                ["sao_paulo", "Exemplo XR 2,5mg + 12,5mg Comprimidos", None, "19.9", None, "2.5mg+12.5mg",
+                 "comprimido liberacao prolongada", "comprimido"],
+            ],
+            "tipo": "dados",
+            "grafico": {"tipo": "barras", "x": "farmacia", "y": ["preco_por_unidade"], "serie": None,
+                        "pedido": True} if pediu_grafico else None,
+        }
     if "evolu" in pergunta.lower():
         # Para testar o gráfico de linha: menor preço por coleta em três farmácias.
         datas = ["2026-10-06", "2026-10-08", "2026-10-10", "2026-10-12", "2026-10-14", "2026-10-16"]

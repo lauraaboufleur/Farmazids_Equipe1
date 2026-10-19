@@ -53,6 +53,33 @@ NOMES_COLUNAS = {
     "dt": "Coleta",
     "desconto": "Desconto",
     "quantidade": "Quantidade",
+    "unidade": "Unidade",
+    "concentracao": "Concentração",
+    "forma": "Forma",
+}
+
+# Preço por unidade (vw_precos_unitarios): o cabeçalho diz a unidade ("Por comprimido",
+# "Pix por ml"...) quando todas as linhas têm a mesma; senão, "Por unidade".
+PRECO_POR_UNIDADE = re.compile(r"^(?:menor_)?preco(?:_(pix|cartao|farmazids))?_por_unidade$")
+TIPOS_PRECO = {"pix": "Pix por", "cartao": "Cartão por", "farmazids": "Farmazids por"}
+
+# Unidade e forma vêm sem acento das views; na tabela aparecem escritas direito.
+NOMES_UNIDADES_FORMAS = {
+    "capsula": "cápsula",
+    "dragea": "drágea",
+    "sache": "sachê",
+    "supositorio": "supositório",
+    "ovulo": "óvulo",
+    "solucao": "solução",
+    "suspensao": "suspensão",
+    "colirio": "colírio",
+    "locao": "loção",
+    "po": "pó",
+    "injetavel": "injetável",
+    "comprimido liberacao prolongada": "comprimido de liberação prolongada",
+    "capsula liberacao prolongada": "cápsula de liberação prolongada",
+    "dragea liberacao prolongada": "drágea de liberação prolongada",
+    "capsula efervescente": "cápsula efervescente",
 }
 
 # Larguras fixas para a tabela caber no balão sem rolar para o lado. O nome do
@@ -201,6 +228,18 @@ def em_reais(valor):
     return f"R$ {texto}"
 
 
+def em_reais_unidade(valor):
+    """Preço por unidade: 2 casas, ou 3 quando for menor que R$ 1 (0.453 -> "R$ 0,453"; 0.45 -> "R$ 0,45")."""
+    if vazio(valor):
+        return VAZIO
+    if abs(valor) >= 1:
+        return em_reais(valor)
+    texto = f"{valor:.3f}"
+    if texto.endswith("0"):
+        texto = texto[:-1]
+    return "R$ " + texto.replace(".", ",")
+
+
 def inteiro_br(valor):
     """11629 -> "11.629"."""
     if vazio(valor):
@@ -218,7 +257,19 @@ def data_br(valor):
     return texto
 
 
-def nome_coluna(coluna):
+def unidade_unica(colunas, linhas):
+    """A unidade da coluna "unidade" quando todas as linhas têm a mesma (ex.: "comprimido"); senão, None."""
+    indices = [i for i, c in enumerate(colunas) if c.lower() == "unidade"]
+    unidades = {str(linha[i]).lower() for i in indices for linha in linhas if not vazio(linha[i])}
+    return unidades.pop() if len(unidades) == 1 else None
+
+
+def nome_coluna(coluna, unidade=None):
+    """unidade: a unidade de todas as linhas (ex.: "comprimido"), para o cabeçalho do preço por unidade."""
+    por_unidade = PRECO_POR_UNIDADE.match(coluna.lower())
+    if por_unidade:
+        inicio = TIPOS_PRECO.get(por_unidade.group(1), "Por")
+        return f"{inicio} {NOMES_UNIDADES_FORMAS.get(unidade, unidade) if unidade else 'unidade'}"
     return NOMES_COLUNAS.get(coluna.lower(), coluna.replace("_", " ").capitalize())
 
 
@@ -231,6 +282,8 @@ def montar_tabela(colunas, linhas):
     # não atrapalhar a conversão dos preços em número.
     tabela = tabela.astype(object).map(lambda v: None if vazio(v) else v)
     formatos = {}
+    # Se todas as linhas têm a mesma unidade, o cabeçalho do preço por unidade diz qual ("Por comprimido").
+    unidade = unidade_unica(colunas, linhas)
 
     for coluna in tabela.columns:
         chave = coluna.lower()
@@ -247,6 +300,16 @@ def montar_tabela(colunas, linhas):
             tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_FARMACIAS.get(str(v).lower(), v))
             continue
 
+        if chave in ("unidade", "forma"):
+            tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_UNIDADES_FORMAS.get(str(v).lower(), v))
+            continue
+
+        if chave == "concentracao":
+            # "2.5mg+12.5mg" -> "2,5mg + 12,5mg"
+            tabela[coluna] = valores.map(
+                lambda v: VAZIO if v is None else re.sub(r"(\d)\.(\d)", r"\1,\2", str(v)).replace("+", " + "))
+            continue
+
         if chave in ("dt", "data_coleta") or chave.startswith("data"):
             tabela[coluna] = valores.map(data_br)
             continue
@@ -255,7 +318,9 @@ def montar_tabela(colunas, linhas):
         # Só converte se nenhum valor preenchido se perdeu na conversão.
         if convertida.notna().sum() != valores.notna().sum():
             continue
-        if "preco" in chave or "valor" in chave:
+        if PRECO_POR_UNIDADE.match(chave):
+            funcao = em_reais_unidade
+        elif "preco" in chave or "valor" in chave:
             funcao = em_reais
         elif (convertida.dropna() % 1 == 0).all():
             funcao = inteiro_br
@@ -278,7 +343,7 @@ def montar_tabela(colunas, linhas):
         if tabela[coluna].dtype == object:
             tabela[coluna] = tabela[coluna].map(lambda v: VAZIO if vazio(v) else v)
 
-    nomes = {coluna: nome_coluna(coluna) for coluna in tabela.columns}
+    nomes = {coluna: nome_coluna(coluna, unidade) for coluna in tabela.columns}
     tabela = tabela.rename(columns=nomes)
     formatos = {nomes[coluna]: funcao for coluna, funcao in formatos.items()}
     # O Styler só muda o que aparece na tela: por baixo, os números continuam
@@ -365,10 +430,14 @@ def montar_grafico(mensagem):
 
     cores = CORES_GRAFICO["escuro" if modo_escuro() else "claro"]
     dinheiro = any(em_dinheiro(y) for y in sugestao["y"])
-    titulo_y = nome_coluna(sugestao["y"][0]) if len(sugestao["y"]) == 1 else ("Preço" if dinheiro else "Valor")
+    unidade = unidade_unica(mensagem.get("colunas") or [], mensagem.get("linhas") or [])
+    titulo_y = (nome_coluna(sugestao["y"][0], unidade) if len(sugestao["y"]) == 1
+                else ("Preço" if dinheiro else "Valor"))
     if menor:
         titulo_y = rotulo_menor(titulo_y)
     formato = "$,.2f" if dinheiro else ",.0f" if (pontos["valor"] % 1 == 0).all() else ",.2f"
+    if dinheiro and any(PRECO_POR_UNIDADE.match(y.lower()) for y in sugestao["y"]) and pontos["valor"].max() < 1:
+        formato = "$,.3f"  # preço por comprimido abaixo de R$ 1: 3 casas, como na tabela
     titulo_x = nome_coluna(sugestao["x"])
     uma_serie = pontos["serie"].nunique() == 1
 

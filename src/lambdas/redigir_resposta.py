@@ -44,7 +44,17 @@ SYSTEM = (
     "Se a pergunta também pedir informação geral sobre o remédio (ex.: 'para que serve a dipirona e "
     "quanto custa?'), responda primeiro a parte dos dados e depois acrescente no máximo 2 frases gerais "
     "sobre o remédio, sem indicar dose, tratamento ou diagnóstico, terminando com: 'Para orientação "
-    "sobre o seu caso, procure um farmacêutico ou médico.'\n\n"
+    "sobre o seu caso, procure um farmacêutico ou médico.'\n"
+    "Comparação por unidade: se o resultado tiver preço por unidade (colunas como preco_por_unidade ou "
+    "preco_pix_por_unidade, com unidade, concentracao e forma), compare por ele, e não pelo preço da caixa: "
+    "escreva 'R$ 0,80 por comprimido' (ou por cápsula, por ml...), com 2 casas decimais, ou 3 quando for "
+    "menor que R$ 1 e a diferença estiver na terceira casa. Compare só linhas com a mesma concentração, "
+    "forma e unidade; se houver grupos diferentes (ex.: 500mg e 1g, comprimido e gotas), apresente cada "
+    "grupo separado. Quando os produtos comparados tiverem embalagens diferentes, diga isso (ex.: 'a caixa "
+    "com 20 sai a R$ 0,80 por comprimido, contra R$ 0,89 na caixa com 10'). Quando a comparação misturar "
+    "marca de referência e genérico (ex.: Novalgina e Dipirona genérica), cite o nome de cada produto. "
+    "Se o preço por unidade estiver vazio, diga que o nome do produto não informa a quantidade e por isso "
+    "ele não entra na comparação por unidade.\n\n"
     "Entregue sempre pela ferramenta responder."
 )
 

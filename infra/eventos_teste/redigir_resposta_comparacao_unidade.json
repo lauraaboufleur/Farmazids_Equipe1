@@ -1,0 +1,76 @@
+{
+  "pergunta": "onde a dipirona 1g é mais barata?",
+  "colunas": [
+    "farmacia",
+    "produto",
+    "preco_por_unidade",
+    "preco",
+    "quantidade",
+    "concentracao",
+    "forma",
+    "unidade"
+  ],
+  "linhas": [
+    [
+      "sao_joao",
+      "Dipirona Monoidratada 1g 20 Comprimidos Genérico EMS",
+      "0.445",
+      "8.9",
+      "20.0",
+      "1000mg",
+      "comprimido",
+      "comprimido"
+    ],
+    [
+      "farmazids",
+      "Dipirona 1g 10 Comprimidos Medley",
+      "0.69",
+      "6.9",
+      "10.0",
+      "1000mg",
+      "comprimido",
+      "comprimido"
+    ],
+    [
+      "farmaponte",
+      "Novalgina 1g 10 Comprimidos",
+      "0.89",
+      "8.9",
+      "10.0",
+      "1000mg",
+      "comprimido",
+      "comprimido"
+    ],
+    [
+      "veracruz",
+      "Novalgina 1g 20 Comprimidos",
+      "1.245",
+      "24.9",
+      "20.0",
+      "1000mg",
+      "comprimido",
+      "comprimido"
+    ],
+    [
+      "sao_paulo",
+      "Novalgina 1g Comprimidos",
+      null,
+      "12.9",
+      null,
+      "1000mg",
+      "comprimido",
+      null
+    ],
+    [
+      "farmaponte",
+      "Dipirona Gotas 500mg/ml 20ml",
+      "0.2995",
+      "5.99",
+      "20.0",
+      "500mg/ml",
+      "gotas",
+      "ml"
+    ]
+  ],
+  "historico": []
+}

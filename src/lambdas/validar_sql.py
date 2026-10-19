@@ -1,7 +1,8 @@
 import re
 
 # Regras de validação do SQL gerado pelo Bedrock (slide 6 da aula de IA).
-TABELAS_PERMITIDAS = {"vw_precos_concorrentes", "vw_vendas", "vw_medicamentos"}
+TABELAS_PERMITIDAS = {"vw_precos_concorrentes", "vw_vendas", "vw_medicamentos",
+                      "vw_precos_unitarios", "vw_precos_unitarios_farmazids"}
 LIMITE_MAXIMO = 50
 PALAVRAS_PROIBIDAS = [
     "insert", "update", "delete", "drop", "alter", "create", "merge",

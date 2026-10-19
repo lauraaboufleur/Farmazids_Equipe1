@@ -21,7 +21,10 @@ MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-5-5")
 # Mesmas tabelas que o agente Validar SQL aceita; o modelo só enxerga essas.
 ALLOWED_TABLES = {
     t.strip().lower()
-    for t in os.environ.get("ALLOWED_TABLES", "vw_medicamentos,vw_precos_concorrentes,vw_vendas").split(",")
+    for t in os.environ.get(
+        "ALLOWED_TABLES",
+        "vw_medicamentos,vw_precos_concorrentes,vw_vendas,vw_precos_unitarios,vw_precos_unitarios_farmazids",
+    ).split(",")
     if t.strip()
 }
 # A tela já manda no máximo 3 trocas; o corte aqui é só uma garantia.
@@ -39,7 +42,15 @@ DICAS_DADOS = (
     "de cada farmácia e produto. categorias é um array: use contains(categorias, '...') ou UNNEST.\n"
     "- vw_vendas: vendas da Farmazids (uma linha por venda, com quantidade_vendida e data_venda).\n"
     "- vw_medicamentos: catálogo da Farmazids com o preço próprio (preco_farmazids).\n"
-    "- As três views se ligam pela coluna ean (código de barras do produto).\n"
+    "- vw_precos_unitarios: as mesmas linhas da vw_precos_concorrentes, mais o que foi lido do nome do "
+    "produto: quantidade (da embalagem), unidade ('comprimido', 'capsula', 'ml', 'g', 'dose', 'sache'...), "
+    "concentracao (ex.: '500mg', '1000mg' para 1g, '500mg/ml', '50mg+12.5mg' para combinações), forma "
+    "('comprimido', 'comprimido efervescente', 'comprimido liberacao prolongada', 'capsula', 'gotas', "
+    "'solucao', 'xarope', 'creme'...) e preco_pix_por_unidade e preco_cartao_por_unidade. Quando o nome "
+    "não diz a quantidade, quantidade e o preço por unidade são nulos.\n"
+    "- vw_precos_unitarios_farmazids: a vw_medicamentos com as mesmas colunas lidas do nome e "
+    "preco_farmazids_por_unidade. Não tem farmacia, data de coleta nem estoque (é a tabela de preços).\n"
+    "- As views se ligam pela coluna ean (código de barras do produto).\n"
     "- A coluna farmacia pode vir escrita de formas diferentes em cada view. Filtre sempre com LOWER e "
     "aceitando as variações: Farmaponte -> LOWER(farmacia) = 'farmaponte'; VeraCruz -> LOWER(farmacia) = "
     "'veracruz'; Farmazids -> LOWER(farmacia) = 'farmazids'; São Paulo (Drogaria São Paulo) -> "
@@ -47,6 +58,37 @@ DICAS_DADOS = (
     "('são joão', 'sao_joao', 'sao joao').\n"
     "- Quando o produto está fora de estoque, a São Paulo grava preco_sem_desconto = 9999876. Esse valor "
     "não é um preço: exclua-o de médias, mínimos, máximos e comparações (preco_sem_desconto <> 9999876)."
+)
+
+# Comparação justa: pelo preço por unidade, só entre produtos equivalentes.
+REGRA_COMPARACAO = (
+    "- Comparação de preços entre farmácias, ou da Farmazids com os concorrentes ('compare', 'onde é mais "
+    "barato', 'qual compensa', 'quem vende mais barato'): use vw_precos_unitarios (e "
+    "vw_precos_unitarios_farmazids quando a Farmazids entrar na comparação). Compare só dentro do remédio "
+    "pedido (filtro pelo nome; se a pergunta citar concentração ou forma, filtre também). Agrupe por "
+    "concentracao, forma, unidade e farmacia: produtos com concentração, forma ou unidade diferentes não são "
+    "equivalentes. Traga o nome do produto com min_by e ordene pelo preço por unidade. Produtos sem "
+    "quantidade podem aparecer, com o preço por unidade vazio. Use a coleta mais recente de cada farmácia. "
+    "Modelo (troque 'dipirona' pelo remédio pedido; tire o UNION ALL se a Farmazids não entrar):\n"
+    "WITH ultima AS (SELECT farmacia, max(date(data_coleta)) AS dia FROM vw_precos_unitarios GROUP BY farmacia), "
+    "precos AS (SELECT u.farmacia, u.nome, u.concentracao, u.forma, u.unidade, u.quantidade, "
+    "TRY_CAST(u.preco_pix AS double) AS preco, u.preco_pix_por_unidade AS preco_por_unidade "
+    "FROM vw_precos_unitarios u JOIN ultima ON ultima.farmacia = u.farmacia AND date(u.data_coleta) = ultima.dia "
+    "WHERE LOWER(u.nome) LIKE '%dipirona%' "
+    "UNION ALL SELECT 'farmazids', nome, concentracao, forma, unidade, quantidade, "
+    "TRY_CAST(preco_farmazids AS double), preco_farmazids_por_unidade "
+    "FROM vw_precos_unitarios_farmazids WHERE LOWER(nome) LIKE '%dipirona%') "
+    "SELECT farmacia, COALESCE(min_by(nome, preco_por_unidade), min(nome)) AS produto, "
+    "min(preco_por_unidade) AS preco_por_unidade, "
+    "COALESCE(min_by(preco, preco_por_unidade), min(preco)) AS preco, "
+    "COALESCE(min_by(quantidade, preco_por_unidade), min(quantidade)) AS quantidade, "
+    "concentracao, forma, unidade "
+    "FROM precos GROUP BY concentracao, forma, unidade, farmacia "
+    "ORDER BY concentracao, forma, unidade, preco_por_unidade NULLS LAST LIMIT 50\n"
+    "- Se a pergunta for sobre um produto específico da Farmazids comparado aos concorrentes, ligue "
+    "vw_precos_unitarios_farmazids e vw_precos_unitarios pelo ean (mesmo produto e embalagem).\n"
+    "- Perguntas que não são de comparação (preço de um produto numa farmácia, lista de produtos, evolução, "
+    "estoque, vendas) continuam com as views de sempre.\n"
 )
 
 _schema_cache = None
@@ -84,6 +126,7 @@ def system_prompt():
         "específico (apresentação ou marca, ex.: 'dipirona 500mg 10 comprimidos'), filtre só esse produto e "
         "use preco_pix. Se for genérica (ex.: 'dipirona'), use MIN(preco_pix) AS menor_preco_pix, o menor "
         "preço entre os produtos encontrados em cada coleta.\n"
+        f"{REGRA_COMPARACAO}"
         "- Responda APENAS com o SQL, sem explicações e sem blocos de código.\n"
         "- Se vier uma conversa anterior e a pergunta atual for uma continuação (ex.: 'e na São João?', "
         "'e o mais barato?'), reaproveite produto, filtros e colunas do SQL anterior e mude só o que a "
