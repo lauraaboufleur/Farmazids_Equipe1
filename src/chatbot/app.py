@@ -157,16 +157,9 @@ def aplicar_estilo():
 
 
 # ---------- Login ----------
-# Por enquanto, qualquer usuário e qualquer senha entram. Para valer as senhas
-# do st.secrets, troque para False.
-ACEITAR_QUALQUER_LOGIN = True
-
-
 def senha_confere(usuario, senha):
     """Os usuários e senhas ficam em st.secrets, na seção [usuarios]
     (arquivo .streamlit/secrets.toml no computador, ou Secrets no Community Cloud)."""
-    if ACEITAR_QUALQUER_LOGIN:
-        return True
     usuarios = st.secrets.get("usuarios", {})
     certa = usuarios.get(usuario)
     # compare_digest compara sem "vazar" pelo tempo quantas letras acertou.
@@ -186,7 +179,7 @@ def pedir_login():
             entrar = st.form_submit_button("Entrar", width="stretch")
         if entrar:
             if senha_confere(usuario.strip(), senha):
-                st.session_state.usuario = usuario.strip() or "visitante"
+                st.session_state.usuario = usuario.strip()
                 st.rerun()
             st.error("Usuário ou senha incorretos.")
     st.stop()
