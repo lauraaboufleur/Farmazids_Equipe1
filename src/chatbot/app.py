@@ -96,6 +96,7 @@ CARACTERES_SQL = 1500
 TIPOS_GRAFICO = {"barras", "linha"}
 SEM_ESTOQUE = 9999876  # "preço" que a São Paulo grava quando está fora de estoque: não entra no gráfico
 PEDIU_GRAFICO = re.compile(r"gr[áa]fico", re.IGNORECASE)
+COLUNAS_PRODUTO = {"nome", "produto", "nome_produto"}  # mostrada na dica do mouse junto com o menor preço
 # Cores da marca, uma por série (farmácia, Pix/cartão...). No modo escuro o
 # roxo some sobre o fundo, então a primeira cor vira um lilás claro.
 CORES_GRAFICO = {
@@ -257,10 +258,23 @@ def montar_tabela(colunas, linhas):
 
 
 # ---------- Gráfico ----------
+def em_dinheiro(coluna):
+    return "preco" in coluna.lower() or "valor" in coluna.lower()
+
+
+def rotulo_menor(rotulo):
+    """"Preço Pix" -> "Menor preço Pix" (sem repetir se já for "Menor ...")."""
+    return rotulo if rotulo.lower().startswith("menor") else f"Menor {rotulo[0].lower()}{rotulo[1:]}"
+
+
 def dados_do_grafico(sugestao, colunas, linhas):
     """Confere a sugestão de gráfico e monta os pontos (uma linha por ponto:
-    x, série e valor). Devolve None se algo não servir: coluna que não existe,
-    valor que não é número, data que não é data, menos de 2 pontos."""
+    x, série, valor e produto). Devolve (pontos, menor) ou None se algo não
+    servir: coluna que não existe, valor que não é número, data que não é data,
+    menos de 2 pontos.
+    Preço nunca é somado: se a mesma farmácia (ou data) aparece em várias
+    linhas, fica só o menor preço de cada uma, com o produto que tem esse preço,
+    e menor = True."""
     if not isinstance(sugestao, dict) or sugestao.get("tipo") not in TIPOS_GRAFICO:
         return None
     x, ys, serie = sugestao.get("x"), sugestao.get("y") or [], sugestao.get("serie")
@@ -268,6 +282,7 @@ def dados_do_grafico(sugestao, colunas, linhas):
         return None
     if len(ys) > 1 or serie not in colunas or serie == x or serie in ys:
         serie = None  # várias colunas de valores já viram várias séries
+    produto = next((c for c in colunas if c.lower() in COLUNAS_PRODUTO and c not in (x, serie)), None)
 
     tabela = pd.DataFrame(linhas, columns=colunas).astype(object).map(lambda v: None if vazio(v) else v)
     if sugestao["tipo"] == "linha":
@@ -289,10 +304,18 @@ def dados_do_grafico(sugestao, colunas, linhas):
             nomes_series = tabela[serie].map(lambda v: NOMES_FARMACIAS.get(str(v).lower(), str(v)))
         else:
             nomes_series = pd.Series(nome_coluna(y), index=tabela.index)
-        pontos.append(pd.DataFrame({"x": eixo_x, "serie": nomes_series, "valor": valores}))
+        pontos.append(pd.DataFrame({"x": eixo_x, "serie": nomes_series, "valor": valores,
+                                    "produto": tabela[produto] if produto else None}))
     pontos = pd.concat(pontos, ignore_index=True).dropna(subset=["x", "valor"])
     pontos = pontos[pontos["valor"] != SEM_ESTOQUE]
-    return pontos if len(pontos) >= 2 else None
+
+    menor = any(em_dinheiro(y) for y in ys) and pontos.duplicated(["x", "serie"]).any()
+    if menor:
+        # Sem isso, o gráfico empilha as barras e a altura vira a soma dos preços.
+        pontos = pontos.loc[pontos.groupby(["x", "serie"], sort=False)["valor"].idxmin()]
+        if not serie:
+            pontos["serie"] = pontos["serie"].map(rotulo_menor)
+    return (pontos, menor) if len(pontos) >= 2 else None
 
 
 def montar_grafico(mensagem):
@@ -300,24 +323,30 @@ def montar_grafico(mensagem):
     quando não há gráfico para mostrar; nunca dá erro na tela."""
     sugestao = mensagem.get("grafico")
     try:
-        pontos = dados_do_grafico(sugestao, mensagem.get("colunas") or [], mensagem.get("linhas") or [])
+        dados = dados_do_grafico(sugestao, mensagem.get("colunas") or [], mensagem.get("linhas") or [])
     except Exception as erro:
         print(f"[chatbot] gráfico ignorado: {erro!r}")
         return None
-    if pontos is None:
+    if dados is None:
         return None
+    pontos, menor = dados
 
     cores = CORES_GRAFICO["escuro" if modo_escuro() else "claro"]
-    em_dinheiro = any("preco" in y.lower() or "valor" in y.lower() for y in sugestao["y"])
-    titulo_y = nome_coluna(sugestao["y"][0]) if len(sugestao["y"]) == 1 else ("Preço" if em_dinheiro else "Valor")
-    formato = "$,.2f" if em_dinheiro else ",.0f" if (pontos["valor"] % 1 == 0).all() else ",.2f"
+    dinheiro = any(em_dinheiro(y) for y in sugestao["y"])
+    titulo_y = nome_coluna(sugestao["y"][0]) if len(sugestao["y"]) == 1 else ("Preço" if dinheiro else "Valor")
+    if menor:
+        titulo_y = rotulo_menor(titulo_y)
+    formato = "$,.2f" if dinheiro else ",.0f" if (pontos["valor"] % 1 == 0).all() else ",.2f"
     titulo_x = nome_coluna(sugestao["x"])
     uma_serie = pontos["serie"].nunique() == 1
 
+    # Legenda em cima: embaixo, a caixa de pergunta cobre a legenda do último gráfico.
     cor = alt.Color("serie:N", title=None, scale=alt.Scale(range=cores["series"]),
-                    legend=None if uma_serie else alt.Legend(orient="bottom"))
+                    legend=None if uma_serie else alt.Legend(orient="top"))
     valor = alt.Y("valor:Q", title=titulo_y, axis=alt.Axis(format=formato, titlePadding=14))
     dica_valor = alt.Tooltip("valor:Q", title=titulo_y, format=formato)
+    # Com o menor preço, a dica mostra qual produto tem esse preço.
+    dica_produto = [alt.Tooltip("produto:N", title="Produto")] if pontos["produto"].notna().any() else []
     if sugestao["tipo"] == "linha":
         # Pontos grandes: fica mais fácil parar o mouse em cima e ver o valor.
         grafico = alt.Chart(pontos).mark_line(point=alt.OverlayMarkDef(size=80), strokeWidth=2.5).encode(
@@ -325,7 +354,7 @@ def montar_grafico(mensagem):
             y=valor.scale(zero=False),
             color=cor,
             tooltip=[alt.Tooltip("x:T", title=titulo_x, format="%d/%m/%Y"),
-                     alt.Tooltip("serie:N", title="Série"), dica_valor],
+                     alt.Tooltip("serie:N", title="Série"), dica_valor, *dica_produto],
         )
     else:
         muitos = pontos["x"].nunique() > 5
@@ -335,7 +364,8 @@ def montar_grafico(mensagem):
             xOffset=alt.XOffset("serie:N"),
             y=valor,
             color=cor,
-            tooltip=[alt.Tooltip("x:N", title=titulo_x), alt.Tooltip("serie:N", title="Série"), dica_valor],
+            tooltip=[alt.Tooltip("x:N", title=titulo_x), alt.Tooltip("serie:N", title="Série"), dica_valor,
+                     *dica_produto],
         )
     return (
         grafico.properties(height=280)

@@ -151,13 +151,19 @@ def _perguntar_simulado(pergunta, historico):
         "colunas": ["farmacia", "nome", "preco_pix", "preco_cartao", "em_estoque", "data_coleta"],
         "linhas": [
             ["sao_joao", "Dipirona Monoidratada 500mg 10 Comprimidos", "4.19", "4.49", "true", "2026-10-16"],
+            ["sao_joao", "Dipirona 1g 10 Comprimidos", "9.90", "10.49", "true", "2026-10-16"],
+            ["sao_joao", "Novalgina Gotas 20ml", "18.90", "19.90", "true", "2026-10-16"],
             ["farmaponte", "Dipirona Monoidratada 500mg 10 Comprimidos", "4.29", "4.79", "true", "2026-10-16"],
+            ["farmaponte", "Dipirona Gotas 500mg/ml 20ml", "8.49", "8.99", "true", "2026-10-16"],
+            ["farmaponte", "Novalgina 1g 10 Comprimidos", "22.90", "24.50", "true", "2026-10-16"],
             ["veracruz", "Dipirona Gotas 500mg/ml 20ml", "7.90", "8.49", "false", "2026-10-16"],
             ["sao_paulo", "Novalgina 1g 10 Comprimidos", "21.99", "23.90", "true", "2026-10-16"],
             ["sao_paulo", "Dipirona 1g 10 Comprimidos", "9999876", "9999876", "false", "2026-10-16"],
         ],
         "tipo": "dados",
-        # O 9999876 (fora de estoque na São Paulo) está aí de propósito: a tela tira do gráfico.
+        # Várias linhas por farmácia, como no resultado real: o gráfico mostra o
+        # menor preço de cada uma, nunca a soma. O 9999876 (fora de estoque na
+        # São Paulo) está aí de propósito: a tela tira do gráfico.
         "grafico": {"tipo": "barras", "x": "farmacia", "y": ["preco_pix", "preco_cartao"], "serie": None,
                     "pedido": pediu_grafico},
     }
