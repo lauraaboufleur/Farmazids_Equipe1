@@ -1,0 +1,11 @@
+{
+  "pergunta": "e quanto custa na FarmaPonte?",
+  "erro_anterior": null,
+  "historico": [
+    {
+      "pergunta": "para que serve a dipirona?",
+      "resposta": "A dipirona é um analgésico e antitérmico, usada para aliviar dor e baixar a febre. Estas são informações gerais e não substituem a orientação de um profissional.",
+      "sql": ""
+    }
+  ]
+}

@@ -5,6 +5,8 @@ Recebe:  {"pergunta": "...", "erro_anterior": "", "historico": [...]}
          {"pergunta", "resposta", "sql"} das últimas trocas, da mais antiga para
          a mais recente. Sem histórico, funciona como antes.
 Devolve: {"sql": "..."}
+Se a pergunta for só teórica (ex.: "para que serve a dipirona?"), devolve
+{"sql": "PERGUNTA_TEORICA"} e a máquina manda para o agente Responder teórica.
 Se a pergunta não puder ser respondida com as tabelas, devolve {"sql": "CANNOT_ANSWER"}.
 """
 import os
@@ -81,7 +83,15 @@ def system_prompt():
         "- Se vier uma conversa anterior e a pergunta atual for uma continuação (ex.: 'e na São João?', "
         "'e o mais barato?'), reaproveite produto, filtros e colunas do SQL anterior e mude só o que a "
         "pergunta pedir. Se for um assunto novo, ignore a conversa anterior.\n"
-        "- Se a pergunta não puder ser respondida com essas views, responda exatamente CANNOT_ANSWER.\n\n"
+        "- Se a pergunta for só teórica sobre remédios ou saúde (para que serve, o que é, como age, efeitos, "
+        "diferença entre genérico, similar e referência, se dois remédios são a mesma coisa) e não pedir "
+        "nenhum dado, responda exatamente PERGUNTA_TEORICA.\n"
+        "- É pergunta de dados (gere o SQL) tudo que depende das views: preços, estoque, vendas, catálogo "
+        "('quais remédios temos?', 'qual o remédio mais vendido?') e comparação com os concorrentes. Se a "
+        "pergunta misturar teoria e dados (ex.: 'para que serve a dipirona e quanto custa?'), gere o SQL "
+        "da parte de dados.\n"
+        "- Se a pergunta não for teórica e não puder ser respondida com essas views (ex.: assuntos fora de "
+        "remédios e saúde), responda exatamente CANNOT_ANSWER.\n\n"
         f"Sobre os dados:\n{DICAS_DADOS}"
     )
 
@@ -121,6 +131,8 @@ def lambda_handler(event, context):
     )
     texto = next(b["text"] for b in resp["output"]["message"]["content"] if "text" in b)
     sql = limpar_sql(texto)
-    if "CANNOT_ANSWER" in sql:
+    if "PERGUNTA_TEORICA" in sql:
+        sql = "PERGUNTA_TEORICA"
+    elif "CANNOT_ANSWER" in sql:
         sql = "CANNOT_ANSWER"
     return {"sql": sql}

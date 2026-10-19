@@ -279,17 +279,18 @@ def texto_espera(segundos):
 def montar_historico(mensagens):
     """Últimas trocas que deram certo, para o backend entender perguntas de
     continuação ("e na São João?"). Vai a pergunta, o começo da resposta e o
-    SQL usado; a tabela não vai. Erros e respostas sem SQL ("não encontrei nos
-    dados") ficam de fora.
+    SQL usado; a tabela não vai. As respostas teóricas ("para que serve a
+    dipirona?") entram com o SQL vazio, para "e quanto custa?" saber de qual
+    remédio se trata. Erros e "não encontrei nos dados" ficam de fora.
     O SQL fica guardado nas mensagens só para isso: nunca aparece na tela."""
     trocas = []
     for anterior, mensagem in zip(mensagens, mensagens[1:]):
-        if (anterior["papel"] == "user" and mensagem["papel"] == "assistant"
-                and mensagem.get("ok") and mensagem.get("sql")):
+        if (anterior["papel"] == "user" and mensagem["papel"] == "assistant" and mensagem.get("ok")
+                and (mensagem.get("sql") or mensagem.get("tipo") == "teorica")):
             trocas.append({
                 "pergunta": anterior["texto"],
                 "resposta": " ".join(mensagem["texto"].split())[:CARACTERES_RESPOSTA],
-                "sql": mensagem["sql"][:CARACTERES_SQL],
+                "sql": (mensagem.get("sql") or "")[:CARACTERES_SQL],
             })
     return trocas[-TROCAS_NO_HISTORICO:]
 
@@ -390,6 +391,7 @@ if st.session_state.pendente:
         "texto": resultado["resposta"],
         "ok": resultado["ok"],
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
+        "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

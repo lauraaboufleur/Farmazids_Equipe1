@@ -57,7 +57,7 @@ def _falha(mensagem, detalhe=None):
     # nunca para a tela do usuário.
     if detalhe:
         print(f"[chatbot] erro: {detalhe}")
-    return {"ok": False, "resposta": mensagem, "sql": None, "colunas": [], "linhas": []}
+    return {"ok": False, "resposta": mensagem, "sql": None, "colunas": [], "linhas": [], "tipo": None}
 
 
 def _normalizar(pergunta):
@@ -132,6 +132,7 @@ def _perguntar_simulado(pergunta, historico):
             ["veracruz", "Dipirona Gotas 500mg/ml 20ml", "7.90", "8.49", "false", "2026-10-16"],
             ["sao_paulo", "Novalgina 1g 10 Comprimidos", "21.99", "23.90", "true", "2026-10-16"],
         ],
+        "tipo": "dados",
     }
 
 
@@ -161,6 +162,8 @@ def _perguntar_aws(pergunta, historico):
         "sql": saida.get("sql"),
         "colunas": saida.get("colunas") or [],
         "linhas": saida.get("linhas") or [],
+        # "dados", "teorica" ou "sem_dados". A máquina antiga não manda: fica None.
+        "tipo": saida.get("tipo"),
     }
 
 
@@ -168,7 +171,7 @@ def perguntar(pergunta, historico=None):
     """Recebe a pergunta e o histórico (lista de {"pergunta", "resposta", "sql"},
     da troca mais antiga para a mais recente; vazio na primeira pergunta) e
     devolve sempre as mesmas chaves:
-    ok, resposta, sql, colunas, linhas, duracao (segundos) e do_cache."""
+    ok, resposta, sql, colunas, linhas, tipo, duracao (segundos) e do_cache."""
     inicio = time.perf_counter()
     pergunta = (pergunta or "").strip()
     historico = historico or []

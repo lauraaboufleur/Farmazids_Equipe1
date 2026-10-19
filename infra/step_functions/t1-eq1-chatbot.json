@@ -87,12 +87,17 @@
     },
     "PodeResponder": {
       "Type": "Choice",
-      "Comment": "O Gerar SQL devolve CANNOT_ANSWER quando as views não têm a informação.",
+      "Comment": "O Gerar SQL devolve CANNOT_ANSWER quando as views não têm a informação e PERGUNTA_TEORICA quando a pergunta é teórica (sem dados).",
       "Choices": [
         {
           "Variable": "$.geracao.sql",
           "StringEquals": "CANNOT_ANSWER",
           "Next": "SemDados"
+        },
+        {
+          "Variable": "$.geracao.sql",
+          "StringEquals": "PERGUNTA_TEORICA",
+          "Next": "ResponderTeorica"
         }
       ],
       "Default": "ValidarSQL"
@@ -104,7 +109,61 @@
         "sql": "",
         "colunas": [],
         "linhas": [],
-        "mb_lidos": 0
+        "mb_lidos": 0,
+        "tipo": "sem_dados"
+      },
+      "End": true
+    },
+    "ResponderTeorica": {
+      "Type": "Task",
+      "Comment": "Agente 5: Lambda que responde perguntas teóricas direto com o Bedrock, sem Athena.",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Parameters": {
+        "FunctionName": "t1-eq1-responder-teorica",
+        "Payload": {
+          "pergunta.$": "$.pergunta",
+          "historico.$": "$.historico"
+        }
+      },
+      "ResultSelector": {
+        "resposta.$": "$.Payload.resposta"
+      },
+      "ResultPath": "$.final",
+      "Retry": [
+        {
+          "ErrorEquals": [
+            "Lambda.ServiceException",
+            "Lambda.AWSLambdaException",
+            "Lambda.SdkClientException",
+            "Lambda.TooManyRequestsException",
+            "States.TaskFailed"
+          ],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": [
+            "States.ALL"
+          ],
+          "ResultPath": "$.falha",
+          "Next": "FalhaServico"
+        }
+      ],
+      "Next": "MontarSaidaTeorica"
+    },
+    "MontarSaidaTeorica": {
+      "Type": "Pass",
+      "Comment": "Mesmas chaves da resposta de dados, para a tela não precisar de outro formato.",
+      "Parameters": {
+        "resposta.$": "$.final.resposta",
+        "sql": "",
+        "colunas": [],
+        "linhas": [],
+        "mb_lidos": 0,
+        "tipo": "teorica"
       },
       "End": true
     },
@@ -290,7 +349,8 @@
         "sql.$": "$.geracao.sql",
         "colunas.$": "$.resultado.colunas",
         "linhas.$": "$.resultado.linhas",
-        "mb_lidos.$": "$.resultado.mb_lidos"
+        "mb_lidos.$": "$.resultado.mb_lidos",
+        "tipo": "dados"
       },
       "End": true
     },
