@@ -11,6 +11,7 @@ imagens em assets/. Este arquivo só monta a tela e conversa com o backend.
 import base64
 import hmac
 import html
+import json
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -114,6 +115,16 @@ BOAS_VINDAS = (
     "Faça sua pergunta na caixa abaixo."
 )
 
+# Voz (só recursos do navegador): idioma, vozes preferidas (a primeira que existir no
+# aparelho; senão, qualquer voz pt-BR), velocidade e tom da leitura das respostas.
+# É a única configuração da voz: o assets/voz.js recebe estes valores.
+VOZ = {
+    "idioma": "pt-BR",
+    "vozes": ["Google português do Brasil", "Microsoft Francisca", "Microsoft Thalita", "Luciana"],
+    "velocidade": 1.05,
+    "tom": 1.0,
+}
+
 # Depois desse tempo, o balão de espera explica por que está demorando.
 SEGUNDOS_AVISO_DEMORA = 15
 
@@ -184,6 +195,18 @@ def aplicar_estilo():
     if modo_escuro():
         css += "\n" + (ASSETS / "estilo-escuro.css").read_text(encoding="utf-8")
     st.html(f"<style>{variaveis}\n{css}</style>")
+
+
+def instalar_voz():
+    """Microfone na caixa de pergunta e botões "Ouvir" (assets/voz.js). O script se
+    instala uma vez por página; o container fica escondido (ver .st-key-voz no CSS)."""
+    codigo = (ASSETS / "voz.js").read_text(encoding="utf-8").replace("__CONFIG__", json.dumps(VOZ))
+    # O Streamlit (DOMPurify) apaga, sem avisar, um script cujo texto tenha o sinal de
+    # menor seguido de letra ou barra. Melhor falhar aqui do que a voz sumir em silêncio.
+    if re.search(r"<[/A-Za-z]", codigo):
+        raise ValueError("voz.js: escreva o sinal de menor como \\x3c (ver o comentário no arquivo).")
+    with st.container(key="voz"):
+        st.html(f"<script>{codigo}</script>", unsafe_allow_javascript=True)
 
 
 # ---------- Login ----------
@@ -766,13 +789,41 @@ def limpar_texto(texto):
     return texto.replace("$", "\\$")
 
 
-def rodape(mensagem, coleta=None):
-    """Hora da mensagem (ou, na comparação, a data da coleta) e quanto tempo levou."""
+def reais_falados(achado):
+    """"R$ 0,34" -> "34 centavos"; "R$ 12,50" -> "12 reais e 50 centavos"; "R$ 1,00" -> "1 real"."""
+    reais = int(achado.group(1).replace(".", ""))
+    decimais = achado.group(2) or ""
+    centavos = round(float("0." + decimais) * 100) if decimais else 0
+    if centavos == 100:
+        reais, centavos = reais + 1, 0
+    partes = []
+    if reais or not centavos:
+        partes.append(f"{reais} {'real' if reais == 1 else 'reais'}")
+    if centavos:
+        partes.append(f"{centavos} {'centavo' if centavos == 1 else 'centavos'}")
+    return " e ".join(partes)
+
+
+def texto_para_fala(texto):
+    """O que o botão "Ouvir" lê: só a frase principal da resposta, com os preços por extenso."""
+    frase = primeira_frase(texto)
+    frase = re.sub(r"R\$\s?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?", reais_falados, frase)
+    frase = re.sub(r"[*_`#>]", "", frase.replace(VAZIO, ""))
+    return re.sub(r"\s+([.,;!?])", r"\1", re.sub(r"\s+", " ", frase)).strip()
+
+
+def rodape(mensagem, coleta=None, chave=None):
+    """Hora da mensagem (ou, na comparação, a data da coleta), quanto tempo levou e,
+    nas respostas, o botão "Ouvir" (o assets/voz.js cuida dele)."""
     texto = f"Coleta de {coleta}" if coleta else mensagem["hora"]
     if mensagem.get("do_cache"):
         texto += " · resposta salva"
     elif mensagem.get("duracao") is not None:
         texto += f" · respondido em {mensagem['duracao']:.0f} s"
+    fala = texto_para_fala(mensagem["texto"]) if chave is not None else ""
+    if fala:
+        texto += (f" <button type='button' class='voz-ouvir' data-id='{chave}' "
+                  f"data-fala='{html.escape(fala, quote=True)}'>🔊 Ouvir</button>")
     return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
 
 
@@ -805,7 +856,9 @@ def mostrar(mensagem, chave):
                     with st.expander("Ver gráfico", expanded=True,
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
-            st.markdown(rodape(mensagem, comparacao and comparacao["coleta"]), unsafe_allow_html=True)
+            # "Ouvir" só nas respostas (não na pergunta nem nas boas-vindas).
+            chave_fala = chave if papel == "assistant" and chave != "inicio" else None
+            st.html(rodape(mensagem, comparacao and comparacao["coleta"], chave_fala))
 
 
 def texto_espera(segundos):
@@ -869,6 +922,7 @@ if "pendente" not in st.session_state:
 
 aplicar_estilo()
 pedir_login()
+instalar_voz()
 
 # ---------- Cabeçalho (fica fixo no topo: ver .st-key-cabecalho no estilo.css) ----------
 with st.container(key="cabecalho"):

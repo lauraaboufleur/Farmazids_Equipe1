@@ -331,8 +331,49 @@
 [class*="st-key-tabela-"] details[open] summary p::before { content: "⌄ "; }
 .hora.cmp-rodape { font-size: 12px; color: var(--cmp-suave); }
 
+/* ---------- Voz (assets/voz.js) ---------- */
+/* Container do script da voz: não aparece nem ocupa espaço. */
+.st-key-voz { display: none; }
+/* Microfone dentro da caixa, à esquerda do enviar: mesmo tamanho e cor do círculo da pessoa. */
+.voz-mic {
+  position: absolute; right: 99px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; border-radius: 50%; border: none; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; color: #FFF8EC;
+  background: radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
+}
+.voz-mic:focus-visible { outline: 2px solid var(--roxo); outline-offset: 2px; }
+.voz-mic.ouvindo { animation: voz-pulso 1.2s infinite ease-out; }
+@keyframes voz-pulso {
+  0% { box-shadow: 0 0 0 0 rgba(194, 160, 90, 0.6); }
+  100% { box-shadow: 0 0 0 12px rgba(194, 160, 90, 0); }
+}
+[data-testid="stChatInput"]:has(.voz-mic) [data-testid="stChatInputTextArea"] { padding-right: 46px; }
+/* Caixa bloqueada enquanto a resposta não chega: sem microfone. */
+[data-testid="stChatInput"]:has(textarea:disabled) .voz-mic { display: none; }
+
+/* "Ouvir" no rodapé das respostas; só aparece se o navegador lê em voz alta (classe posta pelo voz.js). */
+.voz-ouvir {
+  margin-left: 8px; padding: 1px 9px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 12px; line-height: 1.6;
+  color: var(--cmp-titulo); background: transparent; border: 1px solid var(--cmp-borda);
+}
+.voz-ouvir:hover, .voz-ouvir.lendo { background: var(--cmp-n-fundo); }
+html:not(.voz-tts) .voz-ouvir { display: none; }
+
+/* Aviso curto (microfone bloqueado, não ouviu nada), acima da caixa de pergunta. */
+.voz-aviso {
+  position: fixed; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 1000;
+  max-width: min(520px, calc(100vw - 32px)); padding: 10px 16px; border-radius: 12px;
+  background: var(--cmp-cartao); color: var(--cmp-texto); border: 1px solid var(--cmp-borda);
+  box-shadow: 0 8px 24px rgba(72, 41, 96, 0.18); font-size: 14px; line-height: 1.5;
+}
+
 /* ---------- Celular ---------- */
 @media (max-width: 640px) {
+  .voz-mic { right: 78px; width: 30px; height: 30px; }
+  .voz-mic svg { width: 15px; height: 15px; }
+  [data-testid="stChatInput"]:has(.voz-mic) [data-testid="stChatInputTextArea"] { padding-right: 38px; }
+  .voz-aviso { bottom: 84px; }
   /* No celular, os detalhes vão para baixo da farmácia (no máximo 2 linhas). */
   .cmp-linha {
     grid-template-columns: 22px 1fr 76px; grid-template-areas: "n farmacia preco" "n detalhes preco";
