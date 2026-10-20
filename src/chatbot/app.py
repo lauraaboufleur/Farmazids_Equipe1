@@ -115,14 +115,23 @@ BOAS_VINDAS = (
     "Faça sua pergunta na caixa abaixo."
 )
 
-# Voz (só recursos do navegador): idioma, vozes preferidas (a primeira que existir no
-# aparelho; senão, qualquer voz pt-BR), velocidade e tom da leitura das respostas.
+# Voz do navegador (reserva do Polly): idioma, pausa entre as frases e as vozes em ordem
+# de prioridade. Fica a primeira voz pt-BR do aparelho cujo nome contém "nome"; se nenhuma
+# existir, a pt-BR padrão do sistema, com a velocidade e o tom de "padrao".
 # É a única configuração da voz: o assets/voz.js recebe estes valores.
 VOZ = {
     "idioma": "pt-BR",
-    "vozes": ["Google português do Brasil", "Microsoft Francisca", "Microsoft Thalita", "Luciana"],
-    "velocidade": 1.05,
-    "tom": 1.0,
+    "pausa_entre_frases": 250,  # ms
+    "vozes": [
+        # Neurais do Edge: as mais naturais.
+        {"nome": "Microsoft Francisca Online (Natural)", "velocidade": 1.05, "tom": 1.0},
+        {"nome": "Microsoft Thalita Online (Natural)", "velocidade": 1.05, "tom": 1.0},
+        {"nome": "Natural", "velocidade": 1.05, "tom": 1.0},
+        {"nome": "Online", "velocidade": 1.05, "tom": 1.0},
+        # Chrome.
+        {"nome": "Google português do Brasil", "velocidade": 1.0, "tom": 1.0},
+    ],
+    "padrao": {"velocidade": 1.0, "tom": 1.0},
 }
 # Voz mais natural: Amazon Polly (voz neural pt-BR). Se ele falhar, a tela usa a voz
 # do navegador (VOZ, acima). Velocidade e pausa entre as frases vão no SSML.

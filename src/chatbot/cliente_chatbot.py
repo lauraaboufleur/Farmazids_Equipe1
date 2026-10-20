@@ -284,9 +284,10 @@ def perguntar(pergunta, historico=None):
     resultado["do_cache"] = False
     resultado["duracao"] = time.perf_counter() - inicio
     # Fica no log (terminal ou "Manage app" no Streamlit Cloud): ajuda a medir o tempo real.
-    # O SQL não entra no log.
+    # O SQL não entra no log; as colunas sim (mostram se veio o preço por unidade, que dá a
+    # resposta em cartões).
     print(f"[chatbot] {resultado['duracao']:.1f} s | ok={resultado['ok']} | "
-          f"historico={len(historico)} | {pergunta[:60]}")
+          f"historico={len(historico)} | {pergunta[:60]} | colunas={','.join(resultado['colunas'])}")
     return resultado
 
 

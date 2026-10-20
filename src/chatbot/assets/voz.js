@@ -1,10 +1,11 @@
-// Voz no chatbot da Farmazids, só com recursos do navegador (sem AWS e sem custo):
+// Voz no chatbot da Farmazids:
 // - pesquisa por voz: botão de microfone na caixa de pergunta (reconhecimento de fala);
 // - leitura da resposta: botões "Ouvir" no rodapé das respostas. O áudio do Amazon Polly
 //   só é gerado quando vai ser ouvido: o "Ouvir" clica num botão escondido da resposta
 //   (.st-key-pedir-audio-N), o app.py gera o áudio e o põe num player escondido
 //   (.st-key-audio-N), e ele é tocado aqui. Se o Polly falhar, demorar demais ou o
-//   áudio não tocar, usa a voz do navegador (síntese de fala).
+//   áudio não tocar, usa a voz do navegador (síntese de fala), frase por frase, com a
+//   voz escolhida pela tabela de prioridade do app.py (VOZ).
 // O app.py carrega este arquivo a cada execução e troca __CONFIG__ pela configuração
 // da voz (VOZ, no app.py). Ele só se instala uma vez por página.
 (function () {
@@ -17,6 +18,8 @@
     idLendo: null,        // resposta que está sendo lida agora
     audio: null,          // áudio do Polly tocando agora
     esperando: null,      // resposta cujo áudio foi pedido ao app e ainda não chegou
+    leitura: 0,           // muda a cada leitura na voz do navegador: a antiga para de falar
+    pausa: null,          // pausa entre duas frases da voz do navegador
     ouvindo: false,       // microfone ligado
     porVoz: false,        // a última pergunta foi feita por voz: ler a resposta sozinha
   };
@@ -41,15 +44,24 @@
   }
 
   // ---------- Leitura da resposta ----------
-  let vozEscolhida = null;
+  // Voz do navegador: a primeira da tabela de prioridade (VOZ, no app.py) que existir no
+  // aparelho, só entre as pt-BR; senão, a pt-BR padrão do sistema. Vem com a velocidade e
+  // o tom daquela voz.
   function escolherVoz() {
-    const vozes = sintese.getVoices();
-    for (const nome of CONFIG.vozes) {
-      const voz = vozes.find((v) => v.name.toLowerCase().includes(nome.toLowerCase()));
-      if (voz) return voz;
-    }
     const idioma = CONFIG.idioma.toLowerCase();
-    return vozes.find((v) => v.lang.replace("_", "-").toLowerCase() === idioma) || null;
+    const vozes = sintese.getVoices().filter((v) => v.lang.replace("_", "-").toLowerCase() === idioma);
+    for (const preferida of CONFIG.vozes) {
+      const voz = vozes.find((v) => v.name.toLowerCase().includes(preferida.nome.toLowerCase()));
+      if (voz) return { voz: voz, velocidade: preferida.velocidade, tom: preferida.tom };
+    }
+    const padrao = vozes.find((v) => v.default) || vozes.find((v) => v.localService) || vozes[0] || null;
+    return { voz: padrao, velocidade: CONFIG.padrao.velocidade, tom: CONFIG.padrao.tom };
+  }
+
+  // Frase por frase: com a pausa entre elas, a voz do navegador soa menos corrida (e o
+  // Chrome não corta leituras longas).
+  function frasesDe(texto) {
+    return (texto.match(/[^.!?;\n]+[.!?;]*/g) || []).map((f) => f.trim()).filter((f) => /\w/.test(f));
   }
 
   function botaoDa(id) {
@@ -67,6 +79,8 @@
 
   function pararLeitura() {
     estado.esperando = null;
+    estado.leitura += 1;
+    clearTimeout(estado.pausa);
     if (estado.audio) {
       estado.audio.pause();
       estado.audio.currentTime = 0;
@@ -148,29 +162,41 @@
   }
 
   function lerNoNavegador(botao) {
-    const texto = botao.dataset.fala;
-    if (!sintese || !texto) return;
-    const fala = new SpeechSynthesisUtterance(texto);
-    fala.lang = CONFIG.idioma;
-    fala.rate = CONFIG.velocidade;
-    fala.pitch = CONFIG.tom;
-    vozEscolhida = vozEscolhida || escolherVoz();
-    if (vozEscolhida) fala.voice = vozEscolhida;
+    const frases = frasesDe(botao.dataset.fala || "");
+    if (!sintese || !frases.length) return;
+    const escolha = escolherVoz(); // a cada leitura: o navegador carrega as vozes aos poucos
     const id = botao.dataset.id;
-    fala.onend = fala.onerror = () => terminou(id);
+    const vez = ++estado.leitura;
     estado.idLendo = id;
     marcar(id, true);
-    console.info("[voz] lendo com a voz do navegador:", vozEscolhida ? vozEscolhida.name : "padrão do aparelho");
-    sintese.speak(fala);
+    console.info("[voz] lendo com a voz do navegador: " + (escolha.voz ? escolha.voz.name : "padrão do aparelho") +
+      " (velocidade " + escolha.velocidade + ", tom " + escolha.tom + ", " + frases.length + " frases)");
+    function falar(i) {
+      if (estado.leitura !== vez) return; // parou ou começou outra leitura
+      if (i >= frases.length) {
+        terminou(id);
+        return;
+      }
+      const fala = new SpeechSynthesisUtterance(frases[i]);
+      fala.lang = CONFIG.idioma;
+      fala.rate = escolha.velocidade;
+      fala.pitch = escolha.tom;
+      if (escolha.voz) fala.voice = escolha.voz;
+      fala.onend = () => {
+        if (estado.leitura === vez) estado.pausa = setTimeout(() => falar(i + 1), CONFIG.pausa_entre_frases);
+      };
+      fala.onerror = () => {
+        if (estado.leitura === vez) terminou(id);
+      };
+      sintese.speak(fala);
+    }
+    falar(0);
   }
 
   // Sem esta classe, os botões "Ouvir" ficam escondidos (CSS). Com o Polly, há áudio
   // mesmo sem a voz do navegador; então ela entra sempre.
   document.documentElement.classList.add("voz-tts");
-  if (sintese) {
-    vozEscolhida = escolherVoz();
-    sintese.onvoiceschanged = () => { vozEscolhida = escolherVoz(); };
-  }
+  if (sintese) sintese.getVoices(); // o Chrome só começa a carregar as vozes quando alguém pede
 
   document.addEventListener("click", (evento) => {
     const botao = evento.target.closest && evento.target.closest(".voz-ouvir");

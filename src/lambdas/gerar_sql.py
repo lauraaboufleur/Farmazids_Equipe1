@@ -11,6 +11,7 @@ Se a pergunta não puder ser respondida com as tabelas, devolve {"sql": "CANNOT_
 """
 import os
 import re
+import unicodedata
 
 import boto3
 from botocore.config import Config
@@ -62,9 +63,17 @@ DICAS_DADOS = (
 
 # Comparação justa: pelo preço por unidade, só entre produtos equivalentes.
 REGRA_COMPARACAO = (
-    "- Comparação de preços entre farmácias, ou da Farmazids com os concorrentes ('compare', 'onde é mais "
-    "barato', 'qual compensa', 'quem vende mais barato'): use vw_precos_unitarios (e "
-    "vw_precos_unitarios_farmazids quando a Farmazids entrar na comparação). Compare só dentro do remédio "
+    "- REGRA FIRME: toda pergunta sobre o preço de um remédio ('preço', 'quanto custa', 'mais barato', "
+    "'mais caro', 'onde comprar', 'onde encontrar', 'compare', 'qual compensa', 'quem vende mais barato', "
+    "'valor') usa vw_precos_unitarios (e vw_precos_unitarios_farmazids quando a Farmazids entrar), nunca "
+    "vw_precos_concorrentes, e segue o modelo abaixo. Vale também com o texto sem acento, sem pontuação, "
+    "em minúsculas ou vindo de reconhecimento de voz (ex.: 'onde o paracetamol 750 e mais barato'), com uma "
+    "farmácia só ('quanto custa a dipirona na farmaponte': filtre a farmácia) e com a concentração "
+    "incompleta: número sem unidade depois do remédio é a concentração em mg ('paracetamol 750' -> "
+    "LOWER(u.nome) LIKE '%paracetamol%' AND u.concentracao LIKE '750mg%'; nunca ponha o número no LIKE do "
+    "nome). A única exceção é evolução ao longo do tempo, que segue a regra de evolução (e também pode ler "
+    "da vw_precos_unitarios).\n"
+    "- No modelo, compare só dentro do remédio "
     "pedido (filtro pelo nome; se a pergunta citar concentração ou forma, filtre também). Agrupe por "
     "concentracao, forma, unidade e farmacia: produtos com concentração, forma ou unidade diferentes não são "
     "equivalentes. Traga o nome do produto, a marca, o estoque e a data da coleta com min_by (a tela monta "
@@ -94,8 +103,22 @@ REGRA_COMPARACAO = (
     "ORDER BY concentracao, forma, unidade, preco_por_unidade NULLS LAST LIMIT 50\n"
     "- Se a pergunta for sobre um produto específico da Farmazids comparado aos concorrentes, ligue "
     "vw_precos_unitarios_farmazids e vw_precos_unitarios pelo ean (mesmo produto e embalagem).\n"
-    "- Perguntas que não são de comparação (preço de um produto numa farmácia, lista de produtos, evolução, "
-    "estoque, vendas) continuam com as views de sempre.\n"
+    "- Perguntas que não são de preço (lista de produtos, estoque, vendas, catálogo) continuam com as "
+    "views de sempre.\n"
+)
+
+# Palavras de pergunta de preço, já sem acento e em minúsculas (ver eh_pergunta_de_preco).
+PERGUNTA_DE_PRECO = re.compile(
+    r"\b(preco|precos|custa|custam|custo|barat\w*|car[oa]s?|compar\w*|compensa|valor|valores"
+    r"|onde (comprar|compro|encontr\w*|acho|achar|vende\w*))\b"
+)
+# Evolução ao longo do tempo segue a regra de evolução, não o modelo de comparação.
+PERGUNTA_DE_EVOLUCAO = re.compile(
+    r"\b(evolu\w*|historico|ao longo|variou|variacao|subiu|caiu|grafico|tendencia|por (dia|mes|semana))\b"
+)
+LEMBRETE_PRECO = (
+    "\n\n(Lembrete: é uma pergunta de preço de remédio. Siga a REGRA FIRME: vw_precos_unitarios e o "
+    "modelo de comparação, com as mesmas colunas.)"
 )
 
 _schema_cache = None
@@ -169,12 +192,25 @@ def texto_historico(historico):
     return "\n".join(linhas) + "\n\nPergunta atual: "
 
 
+def sem_acento(texto):
+    return "".join(c for c in unicodedata.normalize("NFD", texto.lower()) if unicodedata.category(c) != "Mn")
+
+
+def eh_pergunta_de_preco(pergunta):
+    """Pergunta de preço de remédio que não é de evolução. O lembrete vai junto da pergunta,
+    para o modelo não voltar à vw_precos_concorrentes (com ou sem acento e pontuação)."""
+    texto = sem_acento(pergunta)
+    return bool(PERGUNTA_DE_PRECO.search(texto)) and not PERGUNTA_DE_EVOLUCAO.search(texto)
+
+
 def lambda_handler(event, context):
     pergunta = event["pergunta"]
     erro_anterior = event.get("erro_anterior") or ""
     historico = event.get("historico") or []
 
     mensagem = texto_historico(historico) + pergunta
+    if eh_pergunta_de_preco(pergunta):
+        mensagem += LEMBRETE_PRECO
     if erro_anterior:
         mensagem += f"\n\nA tentativa anterior foi reprovada:\n{erro_anterior}\n\nCorrija o SQL."
 
@@ -182,7 +218,8 @@ def lambda_handler(event, context):
         modelId=MODEL_ID,
         system=[{"text": system_prompt()}],
         messages=[{"role": "user", "content": [{"text": mensagem}]}],
-        inferenceConfig={"maxTokens": 4000},
+        # temperature 0: a mesma pergunta gera sempre o mesmo SQL (a primeira por voz ou digitada).
+        inferenceConfig={"maxTokens": 4000, "temperature": 0},
     )
     texto = next(b["text"] for b in resp["output"]["message"]["content"] if "text" in b)
     sql = limpar_sql(texto)
