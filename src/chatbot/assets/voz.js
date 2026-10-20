@@ -6,6 +6,8 @@
 //   (.st-key-audio-N), e ele é tocado aqui. Se o Polly falhar, demorar demais ou o
 //   áudio não tocar, usa a voz do navegador (síntese de fala), frase por frase, com a
 //   voz escolhida pela tabela de prioridade do app.py (VOZ).
+// Também expõe perguntar(texto) e avisar(texto) em window.farmazidsVoz, para o leitor de
+// código de barras (assets/leitor_ean.js) usar o mesmo caminho.
 // O app.py carrega este arquivo a cada execução e troca __CONFIG__ pela configuração
 // da voz (VOZ, no app.py). Ele só se instala uma vez por página.
 (function () {
@@ -220,6 +222,13 @@
     if (botao && !botao.disabled) botao.click();
     else if (tentativas > 0) setTimeout(() => enviar(tentativas - 1), 100);
   }
+
+  // O mesmo caminho para quem mais precisar mandar uma pergunta (o leitor_ean.js usa).
+  estado.perguntar = (texto) => {
+    preencher(texto);
+    enviar(10);
+  };
+  estado.avisar = avisar;
 
   function marcarMic(ouvindo) {
     estado.ouvindo = ouvindo;

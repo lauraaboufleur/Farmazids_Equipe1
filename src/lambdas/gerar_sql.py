@@ -103,6 +103,11 @@ REGRA_COMPARACAO = (
     "ORDER BY concentracao, forma, unidade, preco_por_unidade NULLS LAST LIMIT 50\n"
     "- Se a pergunta for sobre um produto específico da Farmazids comparado aos concorrentes, ligue "
     "vw_precos_unitarios_farmazids e vw_precos_unitarios pelo ean (mesmo produto e embalagem).\n"
+    "- Código de barras (EAN: 8 ou 13 dígitos, ex.: 'produto com código de barras 7891234567895'): use o "
+    "mesmo modelo, com a Farmazids, mas troque o filtro pelo nome pelo filtro do ean nas duas partes: "
+    "TRIM(CAST(u.ean AS varchar)) = '7891234567895' na vw_precos_unitarios e TRIM(CAST(ean AS varchar)) = "
+    "'7891234567895' na vw_precos_unitarios_farmazids. Esse número é o código, não a concentração: não "
+    "filtre concentração nem nome.\n"
     "- Perguntas que não são de preço (lista de produtos, estoque, vendas, catálogo) continuam com as "
     "views de sempre.\n"
 )
@@ -115,6 +120,12 @@ PERGUNTA_DE_PRECO = re.compile(
 # Evolução ao longo do tempo segue a regra de evolução, não o modelo de comparação.
 PERGUNTA_DE_EVOLUCAO = re.compile(
     r"\b(evolu\w*|historico|ao longo|variou|variacao|subiu|caiu|grafico|tendencia|por (dia|mes|semana))\b"
+)
+# Código de barras na pergunta (o leitor da tela manda "... com código de barras <EAN>").
+EAN_NA_PERGUNTA = re.compile(r"(?<!\d)(\d{13}|\d{8})(?!\d)")
+LEMBRETE_EAN = (
+    "\n\n(Lembrete: {ean} é o código de barras (EAN) do produto. Filtre pelo ean nas duas partes do "
+    "modelo de comparação, não pelo nome nem pela concentração.)"
 )
 LEMBRETE_PRECO = (
     "\n\n(Lembrete: é uma pergunta de preço de remédio. Siga a REGRA FIRME: vw_precos_unitarios e o "
@@ -211,6 +222,9 @@ def lambda_handler(event, context):
     mensagem = texto_historico(historico) + pergunta
     if eh_pergunta_de_preco(pergunta):
         mensagem += LEMBRETE_PRECO
+    ean = EAN_NA_PERGUNTA.search(pergunta)
+    if ean:
+        mensagem += LEMBRETE_EAN.format(ean=ean.group(1))
     if erro_anterior:
         mensagem += f"\n\nA tentativa anterior foi reprovada:\n{erro_anterior}\n\nCorrija o SQL."
 
@@ -218,8 +232,9 @@ def lambda_handler(event, context):
         modelId=MODEL_ID,
         system=[{"text": system_prompt()}],
         messages=[{"role": "user", "content": [{"text": mensagem}]}],
-        # temperature 0: a mesma pergunta gera sempre o mesmo SQL (a primeira por voz ou digitada).
-        inferenceConfig={"maxTokens": 4000, "temperature": 0},
+        # Sem temperature nem top_p: este modelo recusa os dois ("deprecated"). A regra firme
+        # e o lembrete de preço é que mantêm o SQL estável.
+        inferenceConfig={"maxTokens": 4000},
     )
     texto = next(b["text"] for b in resp["output"]["message"]["content"] if "text" in b)
     sql = limpar_sql(texto)

@@ -203,6 +203,9 @@ def aplicar_estilo():
         ":root {"
         f"--pessoa: {svg_como_url('pessoa.svg')};"
         f"--aviao: {svg_como_url('aviao.svg')};"
+        # Ícone do leitor de código de barras: usado como máscara, a cor vem do CSS.
+        f"--ean-cantos-img: {svg_como_url('ean-cantos.svg')};"
+        f"--ean-barras-img: {svg_como_url('ean-barras.svg')};"
         "}"
     )
     css = (ASSETS / "estilo.css").read_text(encoding="utf-8")
@@ -212,16 +215,26 @@ def aplicar_estilo():
     st.html(f"<style>{variaveis}\n{css}</style>")
 
 
-def instalar_voz():
-    """Microfone na caixa de pergunta e botões "Ouvir" (assets/voz.js). O script se
-    instala uma vez por página; o container fica escondido (ver .st-key-voz no CSS)."""
-    codigo = (ASSETS / "voz.js").read_text(encoding="utf-8").replace("__CONFIG__", json.dumps(VOZ))
-    # O Streamlit (DOMPurify) apaga, sem avisar, um script cujo texto tenha o sinal de
-    # menor seguido de letra ou barra. Melhor falhar aqui do que a voz sumir em silêncio.
-    if re.search(r"<[/A-Za-z]", codigo):
-        raise ValueError("voz.js: escreva o sinal de menor como \\x3c (ver o comentário no arquivo).")
+# Botão do leitor de código de barras (cabeçalho). O ícone vem do estilo.css (máscaras
+# com as cores do modo claro e do escuro): o st.html apaga SVG escrito aqui.
+BOTAO_EAN = "<button type='button' class='ean-botao' title='Ler código de barras' aria-label='Ler código de barras'></button>"
+
+
+def instalar_scripts():
+    """Microfone na caixa de pergunta e botões "Ouvir" (assets/voz.js) e leitor de código
+    de barras (assets/leitor_ean.js, que usa o voz.js para mandar a pergunta). Cada
+    script se instala uma vez por página; o container fica escondido (ver .st-key-voz no CSS)."""
+    scripts = {
+        "voz.js": (ASSETS / "voz.js").read_text(encoding="utf-8").replace("__CONFIG__", json.dumps(VOZ)),
+        "leitor_ean.js": (ASSETS / "leitor_ean.js").read_text(encoding="utf-8"),
+    }
     with st.container(key="voz"):
-        st.html(f"<script>{codigo}</script>", unsafe_allow_javascript=True)
+        for nome, codigo in scripts.items():
+            # O Streamlit (DOMPurify) apaga, sem avisar, um script cujo texto tenha o sinal de
+            # menor seguido de letra ou barra. Melhor falhar aqui do que o script sumir em silêncio.
+            if re.search(r"<[/A-Za-z]", codigo):
+                raise ValueError(f"{nome}: escreva o sinal de menor como \\x3c (ver o comentário no voz.js).")
+            st.html(f"<script>{codigo}</script>", unsafe_allow_javascript=True)
 
 
 # ---------- Login ----------
@@ -1136,7 +1149,7 @@ if "pendente" not in st.session_state:
 
 aplicar_estilo()
 pedir_login()
-instalar_voz()
+instalar_scripts()
 
 # ---------- Cabeçalho (fica fixo no topo: ver .st-key-cabecalho no estilo.css) ----------
 with st.container(key="cabecalho"):
@@ -1152,9 +1165,10 @@ with st.container(key="cabecalho"):
         disabled=st.session_state.pendente is not None,
     )
     # O tamanho do letreiro vem do estilo.css (.st-key-cabecalho img): menor no
-    # celular que no computador. O lema fica à direita e some em telas estreitas.
+    # celular que no computador. O leitor de código de barras fica à direita
+    # (o assets/leitor_ean.js cuida do clique).
     st.image(TITULO_ESCURO if modo_escuro() else TITULO)
-    st.markdown("<div class='lema'>TRADIÇÃO<br>QUE GERA<br>CONHECIMENTO</div>", unsafe_allow_html=True)
+    st.html(BOTAO_EAN)
     st.markdown(
         "<p class='subtitulo'>Assistente de dados para consulta de preços, "
         "concorrentes, vendas e medicamentos.</p>",

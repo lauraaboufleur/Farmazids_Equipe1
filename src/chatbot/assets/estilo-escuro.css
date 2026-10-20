@@ -21,6 +21,12 @@
   --fundo-caixa: #261C33;
   --divisoria-caixa: #4A3A5A;
   --botao-enviar: #5A3778;
+  --ean-barras: #D9C7E8;
+  --ean-fundo-janela: rgba(8, 5, 12, 0.78);
+  --ean-caixa: #261C33;
+  --ean-borda: #4A3A5A;
+  --ean-texto: #EDE6F2;
+  --ean-erro: #E58A72;
   --cmp-frase: #EDE6F2;
   --cmp-negrito: #E3CFA0;
   --cmp-cartao: #2A2036;

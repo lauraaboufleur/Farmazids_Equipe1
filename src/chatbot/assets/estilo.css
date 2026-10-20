@@ -34,6 +34,13 @@
   --fundo-caixa: #FFFDF8;
   --divisoria-caixa: #E3D3B0;
   --botao-enviar: var(--roxo);
+  /* Leitor de código de barras */
+  --ean-barras: var(--roxo);
+  --ean-fundo-janela: rgba(46, 31, 62, 0.72);
+  --ean-caixa: #FFFDF8;
+  --ean-borda: #E3D3B0;
+  --ean-texto: var(--roxo);
+  --ean-erro: #B5533C;
   /* Comparação por unidade (cartões) */
   --cmp-frase: #2E1F3E;
   --cmp-negrito: #351A4D;
@@ -83,18 +90,27 @@
 .st-key-cabecalho [data-testid="stImage"] img {
   width: clamp(136px, 40vw, 270px) !important; height: auto;
 }
-/* O lema fica no canto direito do cabeçalho, sem empurrar o letreiro. */
-.st-key-cabecalho [data-testid="stElementContainer"]:has(.lema) {
-  position: absolute; right: 0; top: 1.2rem; width: auto;
+/* Leitor de código de barras: no canto direito do cabeçalho, sem empurrar o letreiro
+   (o assets/leitor_ean.js abre a câmera). */
+.st-key-cabecalho [data-testid="stElementContainer"]:has(.ean-botao) {
+  position: absolute; right: 0; top: 1.2rem; width: auto; z-index: 1;
 }
-.lema {
-  width: fit-content; margin: 0;
-  padding: 10px 0;
-  border-top: 1px solid var(--dourado); border-bottom: 1px solid var(--dourado);
-  font-family: "Cinzel", serif; font-size: 0.82rem; line-height: 1.75;
-  letter-spacing: 0.28em; color: var(--cor-lema);
+.ean-botao {
+  position: relative; display: block;
+  width: 42px; height: 42px; padding: 0; cursor: pointer;
+  border-radius: 50%; border: 1px solid var(--dourado);
+  background: transparent;
 }
-@media (max-width: 1250px) { .lema { display: none; } }
+.ean-botao:hover, .ean-botao:focus-visible { background: var(--balao-usuario); border-color: var(--cor-lema); }
+.ean-botao:focus-visible { outline: 2px solid var(--dourado); outline-offset: 2px; }
+/* Ícone em duas camadas (SVGs da pasta assets/decoracao usados como máscara):
+   cantos dourados e barras na cor do tema. */
+.ean-botao::before, .ean-botao::after {
+  content: ""; position: absolute; inset: 9px;
+  -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat;
+}
+.ean-botao::before { background: var(--dourado); -webkit-mask-image: var(--ean-cantos-img); mask-image: var(--ean-cantos-img); }
+.ean-botao::after { background: var(--ean-barras); -webkit-mask-image: var(--ean-barras-img); mask-image: var(--ean-barras-img); }
 
 /* Botão claro/escuro: no canto esquerdo do cabeçalho, sem empurrar o letreiro.
    O Streamlit põe a classe st-key-botao-tema na caixa do botão (key="botao-tema"). */
@@ -388,6 +404,7 @@ html:not(.voz-tts) .voz-ouvir { display: none; }
   [data-testid="stMainBlockContainer"] { padding-left: 0.8rem; padding-right: 0.8rem; padding-bottom: 6rem; }
   [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho) { padding-top: 0.8rem; margin-bottom: 0.8rem; }
   .st-key-botao-tema { top: 0.4rem; }
+  .st-key-cabecalho [data-testid="stElementContainer"]:has(.ean-botao) { top: 0.4rem; }
   .subtitulo { font-size: 0.95rem; margin: 0 0 0.6rem; }
   .aviso-simulado { font-size: 0.78rem; margin: -0.4rem 0 0.6rem; }
 
@@ -405,4 +422,74 @@ html:not(.voz-tts) .voz-ouvir { display: none; }
   [data-testid="stChatInput"]::after { left: 44px; }
   [data-testid="stChatInputTextArea"] { font-size: 0.95rem; }
   [data-testid="stChatInputSubmitButton"] { width: 50px; height: 32px; background-size: 17px !important; }
+}
+
+/* ---------- Leitor de código de barras (janela da câmera, assets/leitor_ean.js) ---------- */
+html.ean-aberto, html.ean-aberto body { overflow: hidden; }
+.ean-janela {
+  position: fixed; inset: 0; z-index: 1000000;
+  display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: var(--ean-fundo-janela);
+}
+.ean-caixa {
+  width: min(520px, 100%); max-height: 100%; overflow: auto;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  padding: 18px; border-radius: 18px;
+  background: var(--ean-caixa); border: 1px solid var(--ean-borda);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+.ean-camera {
+  position: relative; width: 100%; aspect-ratio: 4 / 3;
+  border-radius: 12px; overflow: hidden; background: #000;
+}
+.ean-camera[hidden] { display: none; }
+.ean-video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+/* Retângulo-guia: cantos dourados e uma linha de leitura que sobe e desce. */
+.ean-guia {
+  position: absolute; left: 10%; right: 10%; top: 30%; bottom: 30%;
+  box-shadow: 0 0 0 100vmax rgba(0, 0, 0, 0.35);
+}
+.ean-canto { position: absolute; width: 26px; height: 26px; border: 0 solid var(--dourado); }
+.ean-canto.c1 { left: 0; top: 0; border-left-width: 4px; border-top-width: 4px; border-top-left-radius: 6px; }
+.ean-canto.c2 { right: 0; top: 0; border-right-width: 4px; border-top-width: 4px; border-top-right-radius: 6px; }
+.ean-canto.c3 { right: 0; bottom: 0; border-right-width: 4px; border-bottom-width: 4px; border-bottom-right-radius: 6px; }
+.ean-canto.c4 { left: 0; bottom: 0; border-left-width: 4px; border-bottom-width: 4px; border-bottom-left-radius: 6px; }
+.ean-linha {
+  position: absolute; left: 6%; right: 6%; top: 10%; height: 2px; border-radius: 2px;
+  background: var(--dourado); box-shadow: 0 0 8px 1px var(--dourado);
+  animation: ean-varrer 1.8s ease-in-out infinite alternate;
+}
+@keyframes ean-varrer { from { top: 10%; } to { top: 90%; } }
+@media (prefers-reduced-motion: reduce) { .ean-linha { animation: none; top: 50%; } }
+.ean-instrucao, .ean-motivo {
+  margin: 0; text-align: center; color: var(--ean-texto); font-size: 1rem; line-height: 1.4;
+}
+.ean-instrucao[hidden] { display: none; }
+.ean-digitar { width: 100%; display: flex; flex-direction: column; gap: 10px; }
+.ean-digitar[hidden] { display: none; }
+.ean-linha-digitar { display: flex; gap: 8px; }
+.ean-campo {
+  flex: 1; min-width: 0; height: 44px; padding: 0 12px;
+  border-radius: 10px; border: 1px solid var(--ean-borda);
+  background: var(--fundo); color: var(--ean-texto);
+  font-size: 1.05rem; letter-spacing: 0.06em;
+}
+.ean-campo:focus { outline: 2px solid var(--dourado); outline-offset: 1px; }
+.ean-erro { margin: 0; min-height: 1.2em; color: var(--ean-erro); font-size: 0.9rem; text-align: center; }
+.ean-buscar, .ean-fechar {
+  height: 44px; padding: 0 22px; cursor: pointer;
+  border-radius: 999px; font-size: 1rem;
+}
+.ean-buscar { border: 0; background: var(--botao-enviar); color: #FFFFFF; }
+.ean-fechar { border: 1px solid var(--dourado); background: transparent; color: var(--ean-texto); }
+.ean-buscar:hover { filter: brightness(1.12); }
+.ean-fechar:hover { background: var(--balao-usuario); }
+.ean-buscar:focus-visible, .ean-fechar:focus-visible { outline: 2px solid var(--dourado); outline-offset: 2px; }
+/* Celular: a câmera em pé ocupa mais da tela. */
+@media (max-width: 640px) {
+  .ean-janela { padding: 10px; }
+  .ean-caixa { padding: 14px; }
+  .ean-camera { aspect-ratio: 3 / 4; max-height: 62vh; }
+  .ean-guia { left: 8%; right: 8%; top: 36%; bottom: 36%; }
+  .ean-botao { width: 40px; height: 40px; }
 }
