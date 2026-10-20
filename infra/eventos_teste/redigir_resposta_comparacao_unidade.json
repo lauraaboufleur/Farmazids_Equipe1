@@ -3,73 +3,120 @@
   "colunas": [
     "farmacia",
     "produto",
+    "marca",
     "preco_por_unidade",
     "preco",
     "quantidade",
     "concentracao",
     "forma",
-    "unidade"
+    "unidade",
+    "em_estoque",
+    "data_coleta"
   ],
   "linhas": [
     [
       "sao_joao",
       "Dipirona Monoidratada 1g 20 Comprimidos Genérico EMS",
+      "EMS",
       "0.445",
       "8.9",
       "20.0",
       "1000mg",
       "comprimido",
-      "comprimido"
+      "comprimido",
+      "true",
+      "2026-10-16"
     ],
     [
       "farmazids",
       "Dipirona 1g 10 Comprimidos Medley",
+      null,
       "0.69",
       "6.9",
       "10.0",
       "1000mg",
       "comprimido",
-      "comprimido"
+      "comprimido",
+      null,
+      null
     ],
     [
       "farmaponte",
       "Novalgina 1g 10 Comprimidos",
+      "Sanofi",
       "0.89",
       "8.9",
       "10.0",
       "1000mg",
       "comprimido",
-      "comprimido"
+      "comprimido",
+      "true",
+      "2026-10-16"
     ],
     [
       "veracruz",
       "Novalgina 1g 20 Comprimidos",
+      "Sanofi",
       "1.245",
       "24.9",
       "20.0",
       "1000mg",
       "comprimido",
-      "comprimido"
+      "comprimido",
+      "false",
+      "2026-10-16"
     ],
     [
       "sao_paulo",
       "Novalgina 1g Comprimidos",
+      "Sanofi",
       null,
       "12.9",
       null,
       "1000mg",
       "comprimido",
-      null
+      null,
+      "true",
+      "2026-10-16"
     ],
     [
       "farmaponte",
-      "Dipirona Gotas 500mg/ml 20ml",
+      "Dipirona Gotas 500mg/ml 20ml Prati-Donaduzzi",
+      "Prati-Donaduzzi",
       "0.2995",
       "5.99",
       "20.0",
       "500mg/ml",
       "gotas",
-      "ml"
+      "ml",
+      "true",
+      "2026-10-16"
+    ],
+    [
+      "farmazids",
+      "Novalgina Gotas 500mg/ml 20ml",
+      null,
+      "0.645",
+      "12.9",
+      "20.0",
+      "500mg/ml",
+      "gotas",
+      "ml",
+      null,
+      null
+    ],
+    [
+      "sao_joao",
+      "Novalgina Gotas 500mg/ml 20ml Sanofi",
+      "Sanofi",
+      "0.6995",
+      "13.99",
+      "20.0",
+      "500mg/ml",
+      "gotas",
+      "ml",
+      "true",
+      "2026-10-16"
     ]
   ],
   "historico": []

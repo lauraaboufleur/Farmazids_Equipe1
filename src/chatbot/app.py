@@ -10,6 +10,7 @@ imagens em assets/. Este arquivo só monta a tela e conversa com o backend.
 
 import base64
 import hmac
+import html
 import re
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -92,8 +93,10 @@ LARGURAS = {"Produto": st.column_config.Column(width=300),
 MARCAS = {"true": "✓", "false": "✗"}
 
 # O que aparece quando falta a informação (preço, estoque...), na tabela e no texto.
-VAZIO = "-"
-TEXTOS_VAZIOS = {"", "none", "null", "nan", "nat"}
+VAZIO = "—"
+TEXTOS_VAZIOS = {"", "none", "null", "nan", "nat", "<na>"}
+# As mesmas palavras soltas no texto do Bedrock (ex.: "custa None") viram "—".
+PALAVRAS_VAZIAS = re.compile(r"\b(?:None|none|NaN|nan|null|NULL|NaT|<NA>)\b")
 
 # Como os nomes das farmácias aparecem na tabela.
 NOMES_FARMACIAS = {
@@ -340,7 +343,8 @@ def montar_tabela(colunas, linhas):
 
     # Texto sem informação aparece como "-", e não como "None".
     for coluna in tabela.columns:
-        if tabela[coluna].dtype == object:
+        # (o pandas novo guarda texto como "str", e não como object: por isso o teste é "não numérica")
+        if not pd.api.types.is_numeric_dtype(tabela[coluna]):
             tabela[coluna] = tabela[coluna].map(lambda v: VAZIO if vazio(v) else v)
 
     nomes = {coluna: nome_coluna(coluna, unidade) for coluna in tabela.columns}
@@ -478,20 +482,260 @@ def montar_grafico(mensagem):
     )
 
 
+# ---------- Comparação por unidade ----------
+# Quando o resultado traz preço por unidade (vw_precos_unitarios), a resposta vira:
+# destaque do mais barato, 2 frases do Bedrock, etiquetas, um cartão por grupo
+# equivalente (mesma concentração, forma e unidade) e a tabela recolhida.
+# Tudo é calculado aqui, a partir das colunas e linhas; o Bedrock só escreve o texto.
+PLURAIS = {
+    "comprimido": "comprimidos", "capsula": "cápsulas", "dragea": "drágeas", "sache": "sachês",
+    "pastilha": "pastilhas", "ampola": "ampolas", "flaconete": "flaconetes", "supositorio": "supositórios",
+    "ovulo": "óvulos", "adesivo": "adesivos", "seringa": "seringas", "dose": "doses", "unidade": "unidades",
+}
+REMEDIO_NO_SQL = re.compile(r"like\s+'%([^%']{3,})%'", re.IGNORECASE)  # o remédio filtrado pela gerar-sql
+
+
+def limpo(valor):
+    """Valor pronto para mostrar: None quando é vazio ("None", "nan", "NaT"...)."""
+    return None if vazio(valor) else str(valor).strip()
+
+
+def numero(valor):
+    try:
+        x = float(str(valor).replace(",", "."))
+    except (TypeError, ValueError):
+        return None
+    return None if pd.isna(x) else x
+
+
+def concentracao_br(texto):
+    """"1000mg" -> "1 g"; "500mg/ml" -> "500 mg/ml"; "2.5mg+12.5mg" -> "2,5 mg + 12,5 mg"; "25000ui/g" -> "25.000 UI/g"."""
+    def parte(p):
+        m = re.match(r"^(\d+(?:\.\d+)?)(mg|mcg|ui|%|g)(/.*)?$", p)
+        if not m:
+            return p
+        n, u, por = float(m.group(1)), m.group(2), m.group(3) or ""
+        if u == "mg" and n >= 1000 and n % 1000 == 0 and not por:
+            n, u = n / 1000, "g"
+        valor = f"{n:,.4f}".rstrip("0").rstrip(".").replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{valor}%{por}" if u == "%" else f"{valor} {'UI' if u == 'ui' else u}{por}"
+    return " + ".join(parte(p) for p in str(texto).split("+"))
+
+
+def unidade_br(unidade, plural=False):
+    return PLURAIS.get(unidade, unidade) if plural else NOMES_UNIDADES_FORMAS.get(unidade, unidade)
+
+
+def embalagem(item):
+    """"20 comprimidos", "20 ml", "1 seringa"; None se faltar a quantidade."""
+    if item["quantidade"] is None or not item["unidade"]:
+        return None
+    plural = item["quantidade"] != 1 and item["unidade"] not in ("ml", "g")
+    return f"{item['quantidade']:g}".replace(".", ",") + " " + unidade_br(item["unidade"], plural)
+
+
+def reais_juntos(valor):
+    """"R$ 8,90" sem quebrar a linha entre o R$ e o número."""
+    return em_reais(valor).replace("R$ ", "R$\u00a0")
+
+
+def produto_curto(texto, limite=46):
+    texto = texto or ""
+    return texto if len(texto) <= limite else texto[:limite - 1].rstrip() + "…"
+
+
+def ler_comparacao(mensagem):
+    """Lê o resultado no formato de comparação. Devolve None se não houver preço por
+    unidade (aí a mensagem fica no formato de sempre)."""
+    colunas, linhas = mensagem.get("colunas") or [], mensagem.get("linhas") or []
+    minusculas = [c.lower() for c in colunas]
+    unitarias = [c for c in minusculas if PRECO_POR_UNIDADE.match(c)]
+    if "farmacia" not in minusculas or not unitarias:
+        return None
+    # Preço por unidade principal: o geral, senão o Pix, senão o primeiro que vier.
+    ppu = next((c for c in ("preco_por_unidade", "preco_pix_por_unidade") if c in unitarias), unitarias[0])
+    caixa = ppu.replace("menor_", "").replace("_por_unidade", "")
+    opcoes = {
+        "farmacia": ["farmacia"], "produto": ["produto", "nome", "nome_produto"], "marca": ["marca", "fabricante"],
+        "ppu": [ppu], "caixa": [caixa, "preco", "preco_pix"], "quantidade": ["quantidade"],
+        "unidade": ["unidade"], "concentracao": ["concentracao"], "forma": ["forma"],
+        "estoque": ["em_estoque", "estoque"], "coleta": ["data_coleta", "dt"],
+    }
+    indice = {campo: next((minusculas.index(o) for o in nomes if o in minusculas), None)
+              for campo, nomes in opcoes.items()}
+
+    def valor(linha, campo):
+        i = indice[campo]
+        return limpo(linha[i]) if i is not None and i < len(linha) else None
+
+    itens = []
+    for linha in linhas:
+        farmacia = (valor(linha, "farmacia") or "").lower()
+        itens.append({
+            "farmacia": farmacia,
+            "nome_farmacia": NOMES_FARMACIAS.get(farmacia, valor(linha, "farmacia") or VAZIO),
+            "farmazids": farmacia == "farmazids",
+            "produto": valor(linha, "produto"),
+            "marca": valor(linha, "marca"),
+            "ppu": numero(valor(linha, "ppu")),
+            "caixa": numero(valor(linha, "caixa")),
+            "quantidade": numero(valor(linha, "quantidade")),
+            "unidade": (valor(linha, "unidade") or "").lower() or None,
+            "concentracao": valor(linha, "concentracao"),
+            "forma": (valor(linha, "forma") or "").lower() or None,
+            "estoque": (valor(linha, "estoque") or "").lower() or None,
+            "coleta": valor(linha, "coleta"),
+        })
+    com_preco = [x for x in itens if x["ppu"] is not None and x["ppu"] > 0]
+    if not com_preco:
+        return None
+
+    # Grupos equivalentes, na ordem em que aparecem; dentro, do mais barato ao mais caro.
+    grupos = {}
+    for x in com_preco:
+        grupos.setdefault((x["concentracao"], x["forma"], x["unidade"]), []).append(x)
+    remedio = REMEDIO_NO_SQL.search(mensagem.get("sql") or "")
+    coletas = sorted(x["coleta"][:10] for x in itens if x["coleta"])
+    return {
+        "grupos": [sorted(g, key=lambda x: x["ppu"]) for g in grupos.values()],
+        "sem_quantidade": len(itens) - len(com_preco),
+        "remedio": remedio.group(1).strip().capitalize() if remedio else None,
+        "coleta": data_br(coletas[-1]) if coletas else None,
+        "total": len(itens),
+    }
+
+
+def titulo_grupo(grupo, remedio):
+    """"Dipirona 500 mg/ml · gotas · comparado por ml"."""
+    x = grupo[0]
+    nome = " ".join(p for p in (remedio, concentracao_br(x["concentracao"]) if x["concentracao"] else None) if p)
+    partes = [nome, unidade_br(x["forma"]) if x["forma"] else None,
+              f"comparado por {unidade_br(x['unidade'])}" if x["unidade"] else None]
+    return " · ".join(p for p in partes if p)
+
+
+def etiquetas(comparacao):
+    """As condições da comparação, só as que se aplicam."""
+    grupos, chips = comparacao["grupos"], []
+    if any(len({x["quantidade"] for x in g if x["quantidade"] is not None}) > 1 for g in grupos):
+        chips.append("Embalagens diferentes, comparadas por unidade")
+
+    def tipo(produto):
+        """Genérico, ou a primeira palavra do nome (a marca: Novalgina, Dipirona...)."""
+        texto = (produto or "").lower()
+        return "genérico" if ("genéric" in texto or "generic" in texto) else texto.split(" ")[0]
+
+    if any(len({tipo(x["produto"]) for x in g if x["produto"]}) > 1 for g in grupos):
+        chips.append("Inclui marca e genérico")
+    n = comparacao["sem_quantidade"]
+    if n:
+        chips.append(f"{n} produto{'s' if n > 1 else ''} sem quantidade no nome "
+                     f"{'ficaram' if n > 1 else 'ficou'} de fora")
+    return chips
+
+
+def html_destaque(comparacao):
+    """O mais barato por unidade do grupo principal (o que tem mais farmácias)."""
+    grupo = max(comparacao["grupos"], key=len)
+    melhor = grupo[0]
+    unidade = html.escape(unidade_br(melhor["unidade"]) if melhor["unidade"] else "unidade")
+    quem = f"<b>{html.escape(melhor['nome_farmacia'])}</b>"
+    if melhor["produto"]:
+        quem += f" · {html.escape(produto_curto(melhor['produto']))}"
+    contexto = []
+    if melhor["caixa"] is not None:
+        caixa = embalagem(melhor)
+        contexto.append(f"{'Embalagem com ' + caixa if caixa else 'Embalagem'} por {reais_juntos(melhor['caixa'])}")
+    outros = [x["ppu"] for x in grupo[1:]]
+    if outros and sum(outros) / len(outros) > melhor["ppu"]:
+        media = sum(outros) / len(outros)
+        contexto.append(f"{(media - melhor['ppu']) / media:.0%} abaixo da média dos concorrentes")
+    partes = [
+        f"<div class='cmp-rotulo'>Mais barato por {unidade}</div>",
+        f"<div class='cmp-linha'><span class='cmp-preco'>{em_reais_unidade(melhor['ppu'])}</span>"
+        f"<span class='cmp-unid'>por {unidade}</span></div>",
+        f"<div class='cmp-quem'>{quem}</div>",
+    ]
+    if contexto:
+        partes.append(f"<div class='cmp-contexto'>{html.escape(' · '.join(contexto))}</div>")
+    if len(comparacao["grupos"]) > 1:
+        partes.append(f"<div class='cmp-onde'>{html.escape(titulo_grupo(grupo, comparacao['remedio']))}</div>")
+    return f"<div class='cmp-destaque'>{''.join(partes)}</div>"
+
+
+def so_grupo_principal(mensagem, comparacao):
+    """Com mais de um grupo, o gráfico mostra só o principal (o do destaque):
+    preço por comprimido e preço por ml não dividem o mesmo eixo."""
+    if not comparacao or len(comparacao["grupos"]) < 2:
+        return mensagem
+    x = max(comparacao["grupos"], key=len)[0]
+    chave = (x["concentracao"], x["forma"], x["unidade"])
+    colunas = [c.lower() for c in mensagem["colunas"]]
+    indices = [colunas.index(c) if c in colunas else None for c in ("concentracao", "forma", "unidade")]
+
+    def da_linha(linha):
+        valores = [limpo(linha[i]) if i is not None else None for i in indices]
+        return (valores[0], (valores[1] or "").lower() or None, (valores[2] or "").lower() or None)
+
+    return {**mensagem, "linhas": [linha for linha in mensagem["linhas"] if da_linha(linha) == chave]}
+
+
+def html_etiquetas(comparacao):
+    chips = etiquetas(comparacao)
+    return ("<div class='cmp-chips'>" + "".join(f"<span>{html.escape(c)}</span>" for c in chips) + "</div>"
+            if chips else "")
+
+
+def html_grupos(comparacao):
+    """Um cartão por grupo equivalente, com o ranking do mais barato ao mais caro."""
+    cartoes = []
+    for grupo in comparacao["grupos"]:
+        melhor, maior = grupo[0]["ppu"], grupo[-1]["ppu"]
+        itens = []
+        for x in grupo:
+            largura = max(4, round(100 * x["ppu"] / maior))
+            detalhe = [x["marca"] or (produto_curto(x["produto"], 34) if x["produto"] else None), embalagem(x),
+                       reais_juntos(x["caixa"]) if x["caixa"] is not None else None]
+            detalhe = " · ".join(html.escape(d) for d in detalhe if d)
+            if x["estoque"] == "true":
+                detalhe += "<span class='cmp-estoque'>● em estoque</span>"
+            elif x["estoque"] == "false":
+                detalhe += "<span class='cmp-esgotado'>○ esgotado</span>"
+            diferenca = ("<span class='cmp-selo'>mais barato</span>" if x["ppu"] == melhor
+                         else f"<span class='cmp-dif'>+{(x['ppu'] - melhor) / melhor:.0%}</span>")
+            sua = "<span class='cmp-sua'>sua farmácia</span>" if x["farmazids"] else ""
+            dica = f" title='{html.escape(x['produto'], quote=True)}'" if x["produto"] else ""
+            itens.append(
+                f"<li class='cmp-item{' cmp-farmazids' if x['farmazids'] else ''}'{dica}>"
+                f"<div class='cmp-esq'><div class='cmp-farmacia'>{html.escape(x['nome_farmacia'])}{sua}</div>"
+                f"<div class='cmp-barra'><span style='width:{largura}%'></span></div>"
+                f"<div class='cmp-detalhe'>{detalhe}</div></div>"
+                f"<div class='cmp-dir'><div class='cmp-valor'>{em_reais_unidade(x['ppu'])}</div>{diferenca}</div>"
+                "</li>"
+            )
+        cartoes.append(
+            f"<div class='cmp-grupo'><div class='cmp-titulo'>{html.escape(titulo_grupo(grupo, comparacao['remedio']))}"
+            f"</div><ol class='cmp-ranking'>{''.join(itens)}</ol></div>"
+        )
+    return "".join(cartoes)
+
+
 # ---------- Mensagens ----------
 def limpar_texto(texto):
     """Ajustes no texto do Bedrock antes de mostrar.
     - "$": o Streamlit lê o que está entre dois cifrões como fórmula matemática,
       e "R$ 8,19; concorrente R$ 16,90" aparecia com o meio formatado (as caixas
       verdes). Com "\\$" o cifrão aparece normal.
-    - "None": quando falta um valor, aparece "-"."""
-    texto = re.sub(r"\bNone\b", VAZIO, texto or "")
+    - "None", "nan", "null", "NaT": quando falta um valor, aparece "—"."""
+    texto = PALAVRAS_VAZIAS.sub(VAZIO, texto or "")
     return texto.replace("$", "\\$")
 
 
 def rodape(mensagem):
     """Hora da mensagem e, nas respostas, quanto tempo levou."""
     texto = mensagem["hora"]
+    if mensagem.get("coleta"):
+        texto = f"coleta de {mensagem['coleta']} · " + texto
     if mensagem.get("do_cache"):
         texto += " · resposta salva"
     elif mensagem.get("duracao") is not None:
@@ -506,21 +750,30 @@ def mostrar(mensagem, chave):
     avatar = LOGO if papel == "assistant" else ":material/person:"
     with st.container(key=f"msg-{chave}-{papel}"):
         with st.chat_message(papel, avatar=avatar):
+            comparacao = ler_comparacao(mensagem) if papel == "assistant" and mensagem.get("colunas") else None
+            if comparacao:
+                st.html(html_destaque(comparacao))
             st.markdown(limpar_texto(mensagem["texto"]))
+            if comparacao:
+                st.html(html_etiquetas(comparacao) + html_grupos(comparacao))
             if mensagem.get("colunas"):
-                st.dataframe(
-                    montar_tabela(mensagem["colunas"], mensagem["linhas"]),
-                    hide_index=True,
-                    width="stretch",
-                    column_config=LARGURAS,
-                )
+                tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
+                if comparacao:
+                    # Na comparação, a tabela completa fica recolhida.
+                    with st.expander(f"Ver todos os produtos ({comparacao['total']})", icon=":material/table:",
+                                     key=f"tabela-{chave}"):
+                        st.dataframe(tabela, hide_index=True, width="stretch", column_config=LARGURAS)
+                else:
+                    st.dataframe(tabela, hide_index=True, width="stretch", column_config=LARGURAS)
                 # Gráfico só quando a pergunta pediu; aí ele já aparece aberto.
-                grafico = montar_grafico(mensagem) if mensagem.get("pediu_grafico") else None
+                grafico = montar_grafico(so_grupo_principal(mensagem, comparacao)) \
+                    if mensagem.get("pediu_grafico") else None
                 if grafico is not None:
                     with st.expander("Ver gráfico", expanded=True,
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
-            st.markdown(rodape(mensagem), unsafe_allow_html=True)
+            st.markdown(rodape({**mensagem, "coleta": comparacao and comparacao["coleta"]}),
+                        unsafe_allow_html=True)
 
 
 def texto_espera(segundos):

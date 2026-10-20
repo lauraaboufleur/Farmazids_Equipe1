@@ -21,6 +21,19 @@
   --fundo-caixa: #261C33;
   --divisoria-caixa: #4A3A5A;
   --botao-enviar: #5A3778;
+  --cartao-fundo: #1F1729;
+  --cartao-borda: #3A2C4A;
+  --barra-fundo: #2E2340;
+  --barra: #6E5A84;
+  --barra-melhor: #B79AD6;
+  --texto-suave: #A496B3;
+  --selo-fundo: #3A2F1A;
+  --selo-texto: #E3CFA0;
+  --chip-fundo: #2C2238;
+  --chip-texto: #D9C7E8;
+  --sua-fundo: #2C2230;
+  --sua-borda: #8C7340;
+  --estoque-ok: #7FC79A;
 }
 
 /* O tema do Streamlit continua claro (config.toml), então o texto dele

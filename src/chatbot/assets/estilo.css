@@ -34,6 +34,20 @@
   --fundo-caixa: #FFFDF8;
   --divisoria-caixa: #E3D3B0;
   --botao-enviar: var(--roxo);
+  /* Comparação por unidade (cartões) */
+  --cartao-fundo: #FFFDF8;
+  --cartao-borda: #E6DAEE;
+  --barra-fundo: #EEE6F3;
+  --barra: #B9A6CC;
+  --barra-melhor: var(--roxo);
+  --texto-suave: #7A6A8A;
+  --selo-fundo: #F6EBD3;
+  --selo-texto: #7A5A22;
+  --chip-fundo: #F4EEF8;
+  --chip-texto: #5B4475;
+  --sua-fundo: #FBF1E0;
+  --sua-borda: var(--dourado);
+  --estoque-ok: #3E8456;
 }
 
 /* ---------- Fundo da área principal ---------- */
@@ -252,8 +266,77 @@
 /* Esconde a dica em inglês "Press Enter to submit form" dentro dos campos. */
 .st-key-login [data-testid="InputInstructions"] { display: none; }
 
+/* ---------- Comparação por unidade ---------- */
+/* Destaque do mais barato, etiquetas e um cartão por grupo equivalente (montados no app.py). */
+.cmp-destaque {
+  background: var(--cartao-fundo); border: 1px solid var(--cartao-borda);
+  border-left: 4px solid var(--dourado); border-radius: 14px;
+  padding: 14px 18px; margin: 2px 0 6px; color: var(--texto-assistente);
+}
+.cmp-rotulo {
+  font-family: "Cinzel", serif; font-size: 0.74rem; letter-spacing: 0.12em;
+  text-transform: uppercase; color: var(--cor-lema);
+}
+.cmp-linha { display: flex; align-items: baseline; gap: 8px; margin: 2px 0; }
+.cmp-preco { font-size: 2rem; font-weight: 600; line-height: 1.15; color: var(--negrito-assistente); }
+.cmp-unid { font-size: 1rem; color: var(--texto-suave); }
+.cmp-quem { font-size: 1rem; }
+.cmp-contexto, .cmp-onde { font-size: 0.88rem; color: var(--texto-suave); margin-top: 2px; }
+.cmp-onde { font-style: italic; }
+
+.cmp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; }
+.cmp-chips span {
+  background: var(--chip-fundo); color: var(--chip-texto); border: 1px solid var(--cartao-borda);
+  border-radius: 999px; padding: 3px 11px; font-size: 0.8rem; line-height: 1.5;
+}
+
+.cmp-grupo {
+  background: var(--cartao-fundo); border: 1px solid var(--cartao-borda); border-radius: 14px;
+  padding: 12px 16px 6px; margin-bottom: 12px; color: var(--texto-assistente);
+}
+.cmp-titulo { font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; }
+/* !important: o Streamlit dá recuo e margem às listas dentro das mensagens. */
+.cmp-ranking { list-style: none; margin: 0 !important; padding: 0 !important; }
+.cmp-item {
+  display: flex; align-items: center; gap: 14px;
+  padding: 9px 8px !important; margin: 0 -8px !important; border-top: 1px solid var(--cartao-borda);
+}
+.cmp-item:first-child { border-top: none; }
+.cmp-item.cmp-farmazids {
+  background: var(--sua-fundo); border-radius: 10px; border-top-color: transparent;
+  box-shadow: inset 3px 0 0 var(--sua-borda);
+}
+.cmp-item.cmp-farmazids + .cmp-item { border-top-color: transparent; }
+.cmp-esq { flex: 1; min-width: 0; }
+.cmp-farmacia { font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
+.cmp-sua {
+  font-family: "Cinzel", serif; font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--selo-texto); border: 1px solid var(--sua-borda); border-radius: 999px; padding: 1px 7px;
+  white-space: nowrap;
+}
+.cmp-barra { height: 7px; background: var(--barra-fundo); border-radius: 999px; margin: 6px 0 5px; overflow: hidden; }
+.cmp-barra span { display: block; height: 100%; background: var(--barra); border-radius: 999px; }
+.cmp-item:first-child .cmp-barra span { background: var(--barra-melhor); }
+.cmp-detalhe { font-size: 0.8rem; color: var(--texto-suave); overflow-wrap: anywhere; }
+.cmp-estoque, .cmp-esgotado { margin-left: 8px; white-space: nowrap; }
+.cmp-estoque { color: var(--estoque-ok); }
+.cmp-dir { text-align: right; min-width: 92px; }
+.cmp-valor { font-weight: 600; font-size: 1.05rem; white-space: nowrap; }
+.cmp-dif { font-size: 0.8rem; color: var(--texto-suave); }
+.cmp-selo {
+  display: inline-block; font-size: 0.72rem; background: var(--selo-fundo); color: var(--selo-texto);
+  border-radius: 999px; padding: 1px 8px; margin-top: 2px; white-space: nowrap;
+}
+
 /* ---------- Celular ---------- */
 @media (max-width: 640px) {
+  .cmp-destaque { padding: 12px 14px; }
+  .cmp-preco { font-size: 1.6rem; }
+  .cmp-grupo { padding: 10px 12px 4px; }
+  .cmp-item { gap: 10px; }
+  .cmp-dir { min-width: 78px; }
+  .cmp-valor { font-size: 0.98rem; }
+
   [data-testid="stMainBlockContainer"] { padding-left: 0.8rem; padding-right: 0.8rem; padding-bottom: 6rem; }
   [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho) { padding-top: 0.8rem; margin-bottom: 0.8rem; }
   .st-key-botao-tema { top: 0.4rem; }

@@ -120,26 +120,33 @@ def _perguntar_simulado(pergunta, historico):
     contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
     pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
     if "compar" in pergunta.lower() or "barat" in pergunta.lower():
-        # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql.
+        # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql:
+        # dois grupos equivalentes, a Farmazids no meio e um produto sem quantidade no nome.
+        c = "2026-10-16"
         return {
             "ok": True,
-            "resposta": f"(modo simulado) Comparando pelo preço por comprimido{contexto}: na dipirona 1g, a "
-                        "Dipirona genérica da São João sai a R$ 0,445 por comprimido (caixa com 20), contra "
-                        "R$ 0,89 da Novalgina na FarmaPonte (caixa com 10).",
-            "sql": "WITH ultima AS (...) SELECT concentracao, forma, unidade, farmacia, ... LIMIT 50",
-            "colunas": ["farmacia", "produto", "preco_por_unidade", "preco", "quantidade", "concentracao", "forma",
-                        "unidade"],
+            "resposta": f"(modo simulado) Na dipirona 1 g, a São João é a mais barata: R$ 0,445 por comprimido, "
+                        f"com o genérico da EMS{contexto}. A Farmazids fica em segundo, 55% acima.",
+            "sql": "WITH ultima AS (...) ... WHERE LOWER(u.nome) LIKE '%dipirona%' ... LIMIT 50",
+            "colunas": ["farmacia", "produto", "marca", "preco_por_unidade", "preco", "quantidade", "concentracao",
+                        "forma", "unidade", "em_estoque", "data_coleta"],
             "linhas": [
-                ["sao_joao", "Dipirona 1g 20 Comprimidos Genérico EMS", "0.445", "8.9", "20.0", "1000mg",
-                 "comprimido", "comprimido"],
-                ["farmazids", "Dipirona 1g 10 Comprimidos Medley", "0.69", "6.9", "10.0", "1000mg",
-                 "comprimido", "comprimido"],
-                ["farmaponte", "Novalgina 1g 10 Comprimidos", "0.89", "8.9", "10.0", "1000mg",
-                 "comprimido", "comprimido"],
-                ["veracruz", "Novalgina 1g 20 Comprimidos", "1.245", "24.9", "20.0", "1000mg",
-                 "comprimido", "comprimido"],
-                ["sao_paulo", "Exemplo XR 2,5mg + 12,5mg Comprimidos", None, "19.9", None, "2.5mg+12.5mg",
-                 "comprimido liberacao prolongada", "comprimido"],
+                ["sao_joao", "Dipirona Monoidratada 1g 20 Comprimidos Genérico EMS", "EMS", "0.445", "8.9", "20.0",
+                 "1000mg", "comprimido", "comprimido", "true", c],
+                ["farmazids", "Dipirona 1g 10 Comprimidos Medley", None, "0.69", "6.9", "10.0", "1000mg",
+                 "comprimido", "comprimido", None, None],
+                ["farmaponte", "Novalgina 1g 10 Comprimidos", "Sanofi", "0.89", "8.9", "10.0", "1000mg",
+                 "comprimido", "comprimido", "true", c],
+                ["veracruz", "Novalgina 1g 20 Comprimidos", "Sanofi", "1.245", "24.9", "20.0", "1000mg",
+                 "comprimido", "comprimido", "false", c],
+                ["sao_paulo", "Novalgina 1g Comprimidos", "Sanofi", None, "12.9", None, "1000mg", "comprimido",
+                 None, "true", c],
+                ["farmaponte", "Dipirona Gotas 500mg/ml 20ml Prati-Donaduzzi", "Prati-Donaduzzi", "0.2995", "5.99",
+                 "20.0", "500mg/ml", "gotas", "ml", "true", c],
+                ["farmazids", "Novalgina Gotas 500mg/ml 20ml", "nan", "0.6450", "12.9", "20.0", "500mg/ml", "gotas",
+                 "ml", "None", "NaT"],
+                ["sao_joao", "Novalgina Gotas 500mg/ml 20ml Sanofi", "Sanofi", "0.6995", "13.99", "20.0",
+                 "500mg/ml", "gotas", "ml", "true", c],
             ],
             "tipo": "dados",
             "grafico": {"tipo": "barras", "x": "farmacia", "y": ["preco_por_unidade"], "serie": None,
