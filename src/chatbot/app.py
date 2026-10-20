@@ -484,15 +484,33 @@ def montar_grafico(mensagem):
 
 # ---------- Comparação por unidade ----------
 # Quando o resultado traz preço por unidade (vw_precos_unitarios), a resposta vira:
-# destaque do mais barato, 2 frases do Bedrock, etiquetas, um cartão por grupo
-# equivalente (mesma concentração, forma e unidade) e a tabela recolhida.
-# Tudo é calculado aqui, a partir das colunas e linhas; o Bedrock só escreve o texto.
+# uma frase do Bedrock, um cartão com os 3 mais baratos da apresentação principal
+# (a Farmazids sempre aparece), as outras apresentações em uma linha cada e a tabela
+# recolhida. Tudo é calculado aqui, a partir das colunas e linhas; o Bedrock só
+# escreve a frase.
 PLURAIS = {
     "comprimido": "comprimidos", "capsula": "cápsulas", "dragea": "drágeas", "sache": "sachês",
     "pastilha": "pastilhas", "ampola": "ampolas", "flaconete": "flaconetes", "supositorio": "supositórios",
     "ovulo": "óvulos", "adesivo": "adesivos", "seringa": "seringas", "dose": "doses", "unidade": "unidades",
 }
+# Unidade abreviada: "30 comp." nos detalhes e "/comp" nas outras apresentações.
+ABREVIADAS = {"comprimido": "comp", "capsula": "cáps", "dragea": "drág", "unidade": "un"}
 REMEDIO_NO_SQL = re.compile(r"like\s+'%([^%']{3,})%'", re.IGNORECASE)  # o remédio filtrado pela gerar-sql
+TOP = 3  # quantas farmácias aparecem no cartão principal (fora a Farmazids)
+MAXIMO_OUTRAS = 4  # linhas em "Outras apresentações"
+# Formas que a pergunta pode citar, como aparecem na coluna forma.
+FORMAS_NA_PERGUNTA = {
+    "comprimido": r"comprimid|\bcomp\b", "capsula": r"c[áa]psula", "dragea": r"dr[áa]gea", "gotas": r"\bgotas?\b",
+    "xarope": r"xarope", "solucao": r"solu[çc][ãa]o", "suspensao": r"suspens[ãa]o", "sache": r"sach[êe]",
+    "creme": r"\bcreme\b", "pomada": r"pomada", "gel": r"\bgel\b", "spray": r"spray", "injetavel": r"injet[áa]vel",
+}
+# Nomes das farmácias como podem aparecer na frase do Bedrock (o mais longo primeiro).
+FARMACIAS_NA_FRASE = re.compile(
+    r"Drogaria São Paulo|Drogaria VeraCruz|Drogaria Vera Cruz|FarmaPonte|Farmaponte|VeraCruz|Vera Cruz|"
+    r"São Paulo|São João|Farmazids", re.IGNORECASE)
+PALAVRAS_COMUNS = {"preco", "precos", "preço", "preços", "farmacia", "farmácia", "farmacias", "farmácias",
+                   "barato", "barata", "baratos", "baratas", "compare", "comparar", "comprimido", "comprimidos",
+                   "qual", "quais", "onde", "mais", "menor", "maior", "custa", "valor", "valores", "gotas"}
 
 
 def limpo(valor):
@@ -509,7 +527,7 @@ def numero(valor):
 
 
 def concentracao_br(texto):
-    """"1000mg" -> "1 g"; "500mg/ml" -> "500 mg/ml"; "2.5mg+12.5mg" -> "2,5 mg + 12,5 mg"; "25000ui/g" -> "25.000 UI/g"."""
+    """"1000mg" -> "1 g"; "500mg/ml" -> "500 mg/ml"; "25000ui/g" -> "25.000 UI/g"."""
     def parte(p):
         m = re.match(r"^(\d+(?:\.\d+)?)(mg|mcg|ui|%|g)(/.*)?$", p)
         if not m:
@@ -526,17 +544,9 @@ def unidade_br(unidade, plural=False):
     return PLURAIS.get(unidade, unidade) if plural else NOMES_UNIDADES_FORMAS.get(unidade, unidade)
 
 
-def embalagem(item):
-    """"20 comprimidos", "20 ml", "1 seringa"; None se faltar a quantidade."""
-    if item["quantidade"] is None or not item["unidade"]:
-        return None
-    plural = item["quantidade"] != 1 and item["unidade"] not in ("ml", "g")
-    return f"{item['quantidade']:g}".replace(".", ",") + " " + unidade_br(item["unidade"], plural)
-
-
-def reais_juntos(valor):
+def reais_juntos(valor, unidade=False):
     """"R$ 8,90" sem quebrar a linha entre o R$ e o número."""
-    return em_reais(valor).replace("R$ ", "R$\u00a0")
+    return (em_reais_unidade(valor) if unidade else em_reais(valor)).replace("R$ ", "R$\u00a0")
 
 
 def produto_curto(texto, limite=46):
@@ -558,8 +568,7 @@ def ler_comparacao(mensagem):
     opcoes = {
         "farmacia": ["farmacia"], "produto": ["produto", "nome", "nome_produto"], "marca": ["marca", "fabricante"],
         "ppu": [ppu], "caixa": [caixa, "preco", "preco_pix"], "quantidade": ["quantidade"],
-        "unidade": ["unidade"], "concentracao": ["concentracao"], "forma": ["forma"],
-        "estoque": ["em_estoque", "estoque"], "coleta": ["data_coleta", "dt"],
+        "unidade": ["unidade"], "concentracao": ["concentracao"], "forma": ["forma"], "coleta": ["data_coleta", "dt"],
     }
     indice = {campo: next((minusculas.index(o) for o in nomes if o in minusculas), None)
               for campo, nomes in opcoes.items()}
@@ -583,92 +592,158 @@ def ler_comparacao(mensagem):
             "unidade": (valor(linha, "unidade") or "").lower() or None,
             "concentracao": valor(linha, "concentracao"),
             "forma": (valor(linha, "forma") or "").lower() or None,
-            "estoque": (valor(linha, "estoque") or "").lower() or None,
             "coleta": valor(linha, "coleta"),
         })
     com_preco = [x for x in itens if x["ppu"] is not None and x["ppu"] > 0]
     if not com_preco:
         return None
 
-    # Grupos equivalentes, na ordem em que aparecem; dentro, do mais barato ao mais caro.
+    # Apresentações (mesma concentração, forma e unidade); dentro, do mais barato ao mais caro.
     grupos = {}
     for x in com_preco:
         grupos.setdefault((x["concentracao"], x["forma"], x["unidade"]), []).append(x)
+    grupos = [sorted(g, key=lambda x: x["ppu"]) for g in grupos.values()]
+    pergunta = mensagem.get("pergunta") or ""
+    # Combinações ("500mg+30mg") só entram no resumo se a pergunta citar a combinação.
+    simples = " ".join((x["produto"] or "").lower() for x in com_preco if "+" not in (x["concentracao"] or ""))
+    grupos = [g for g in grupos if "+" not in (g[0]["concentracao"] or "") or cita_combinacao(pergunta, g, simples)]
+    if not grupos:
+        return None
+    principal = escolher_principal(grupos, pergunta)
+    outras = sorted((g for g in grupos if g is not principal), key=lambda g: -len({x["farmacia"] for x in g}))
+
     remedio = REMEDIO_NO_SQL.search(mensagem.get("sql") or "")
     coletas = sorted(x["coleta"][:10] for x in itens if x["coleta"])
     return {
-        "grupos": [sorted(g, key=lambda x: x["ppu"]) for g in grupos.values()],
-        "sem_quantidade": len(itens) - len(com_preco),
+        "principal": principal,
+        "outras": outras[:MAXIMO_OUTRAS],
         "remedio": remedio.group(1).strip().capitalize() if remedio else None,
         "coleta": data_br(coletas[-1]) if coletas else None,
         "total": len(itens),
     }
 
 
-def titulo_grupo(grupo, remedio):
-    """"Dipirona 500 mg/ml · gotas · comparado por ml"."""
+def cita_combinacao(pergunta, grupo, simples):
+    """A pergunta cita a combinação: tem "+" ou uma palavra (de 5 letras ou mais) que
+    aparece nos produtos combinados e não nos simples (ex.: "codeína" em "Paracetamol +
+    Codeína"; "paracetamol" sozinho não conta, porque está nos dois)."""
+    if "+" in pergunta:
+        return True
+    palavras = {p for p in re.findall(r"\w{5,}", pergunta.lower()) if p not in PALAVRAS_COMUNS}
+    combinados = " ".join((x["produto"] or "").lower() for x in grupo)
+    return any(p in combinados and p not in simples for p in palavras)
+
+
+def escolher_principal(grupos, pergunta):
+    """A combinação citada na pergunta; senão, a apresentação pedida (concentração ou
+    forma citada); senão, a vendida pelo maior número de farmácias."""
+    texto = pergunta.lower().replace(",", ".")
+    pedidas = set()
+    for n, u in re.findall(r"(\d+(?:\.\d+)?)\s*(mg|mcg|g|ui|ml)\b", texto):
+        valor = float(n) * 1000 if u == "g" else float(n)
+        pedidas.add(f"{valor:g}{'mg' if u == 'g' else u}")
+    formas = {f for f, r in FORMAS_NA_PERGUNTA.items() if re.search(r, texto)}
+
+    def nota(g):
+        conc, forma = g[0]["concentracao"] or "", g[0]["forma"] or ""
+        acerta_conc = bool(pedidas) and conc.split("/")[0] in pedidas
+        acerta_forma = bool(formas) and forma.split(" ")[0] in formas
+        # Uma combinação só sobra aqui quando a pergunta a citou: aí ela é a principal.
+        return ("+" in conc, acerta_conc + acerta_forma, len({x["farmacia"] for x in g}))
+
+    return max(grupos, key=nota)
+
+
+def nome_apresentacao(grupo, remedio):
+    """"Paracetamol 750 mg · comprimido"."""
     x = grupo[0]
+    if not remedio and "+" in (x["concentracao"] or "") and x["produto"]:
+        # Sem o nome do remédio, uma combinação viraria só números somados: usa o nome do produto.
+        return produto_curto(x["produto"])
     nome = " ".join(p for p in (remedio, concentracao_br(x["concentracao"]) if x["concentracao"] else None) if p)
-    partes = [nome, unidade_br(x["forma"]) if x["forma"] else None,
-              f"comparado por {unidade_br(x['unidade'])}" if x["unidade"] else None]
-    return " · ".join(p for p in partes if p)
+    return " · ".join(p for p in (nome, unidade_br(x["forma"]) if x["forma"] else None) if p)
 
 
-def etiquetas(comparacao):
-    """As condições da comparação, só as que se aplicam."""
-    grupos, chips = comparacao["grupos"], []
-    if any(len({x["quantidade"] for x in g if x["quantidade"] is not None}) > 1 for g in grupos):
-        chips.append("Embalagens diferentes, comparadas por unidade")
-
-    def tipo(produto):
-        """Genérico, ou a primeira palavra do nome (a marca: Novalgina, Dipirona...)."""
-        texto = (produto or "").lower()
-        return "genérico" if ("genéric" in texto or "generic" in texto) else texto.split(" ")[0]
-
-    if any(len({tipo(x["produto"]) for x in g if x["produto"]}) > 1 for g in grupos):
-        chips.append("Inclui marca e genérico")
-    n = comparacao["sem_quantidade"]
-    if n:
-        chips.append(f"{n} produto{'s' if n > 1 else ''} sem quantidade no nome "
-                     f"{'ficaram' if n > 1 else 'ficou'} de fora")
-    return chips
+def embalagem_curta(item):
+    """"30 comp.", "20 ml", "1 seringa"; None se faltar a quantidade."""
+    if item["quantidade"] is None or not item["unidade"]:
+        return None
+    qtd = f"{item['quantidade']:g}".replace(".", ",")
+    if item["unidade"] in ABREVIADAS:
+        return f"{qtd} {ABREVIADAS[item['unidade']]}."
+    plural = item["quantidade"] != 1 and item["unidade"] not in ("ml", "g")
+    return f"{qtd} {unidade_br(item['unidade'], plural)}"
 
 
-def html_destaque(comparacao):
-    """O mais barato por unidade do grupo principal (o que tem mais farmácias)."""
-    grupo = max(comparacao["grupos"], key=len)
-    melhor = grupo[0]
-    unidade = html.escape(unidade_br(melhor["unidade"]) if melhor["unidade"] else "unidade")
-    quem = f"<b>{html.escape(melhor['nome_farmacia'])}</b>"
-    if melhor["produto"]:
-        quem += f" · {html.escape(produto_curto(melhor['produto']))}"
-    contexto = []
-    if melhor["caixa"] is not None:
-        caixa = embalagem(melhor)
-        contexto.append(f"{'Embalagem com ' + caixa if caixa else 'Embalagem'} por {reais_juntos(melhor['caixa'])}")
-    outros = [x["ppu"] for x in grupo[1:]]
-    if outros and sum(outros) / len(outros) > melhor["ppu"]:
-        media = sum(outros) / len(outros)
-        contexto.append(f"{(media - melhor['ppu']) / media:.0%} abaixo da média dos concorrentes")
-    partes = [
-        f"<div class='cmp-rotulo'>Mais barato por {unidade}</div>",
-        f"<div class='cmp-linha'><span class='cmp-preco'>{em_reais_unidade(melhor['ppu'])}</span>"
-        f"<span class='cmp-unid'>por {unidade}</span></div>",
-        f"<div class='cmp-quem'>{quem}</div>",
-    ]
-    if contexto:
-        partes.append(f"<div class='cmp-contexto'>{html.escape(' · '.join(contexto))}</div>")
-    if len(comparacao["grupos"]) > 1:
-        partes.append(f"<div class='cmp-onde'>{html.escape(titulo_grupo(grupo, comparacao['remedio']))}</div>")
-    return f"<div class='cmp-destaque'>{''.join(partes)}</div>"
+def primeira_frase(texto):
+    """Só a primeira frase do Bedrock, sem marcador de lista nem markdown."""
+    texto = PALAVRAS_VAZIAS.sub(VAZIO, texto or "").replace("**", "").replace("__", "")
+    linhas = [re.sub(r"^\s*(?:[-*•]|\d+[.)])\s*", "", l).strip() for l in texto.splitlines()]
+    texto = " ".join(l for l in linhas if l)
+    # Fim de frase: ponto seguido de espaço e letra maiúscula (não corta "R$ 0,34" nem "comp.").
+    partes = re.split(r"(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÂÊÔÃÕÇ])", texto, maxsplit=1)
+    return partes[0].strip()
+
+
+def html_frase(texto):
+    """A frase com a farmácia e o primeiro preço em negrito."""
+    frase = html.escape(primeira_frase(texto))
+    frase = FARMACIAS_NA_FRASE.sub(lambda m: f"<b>{m.group(0)}</b>", frase, count=1)
+    frase = re.sub(r"R\$\s?\d[\d.]*(?:,\d+)?", lambda m: f"<b>{m.group(0)}</b>", frase, count=1)
+    return f"<p class='cmp-frase'>{frase}</p>"
+
+
+def html_linha(posicao, x, melhor):
+    detalhes = [x["marca"], embalagem_curta(x), reais_juntos(x["caixa"]) if x["caixa"] is not None else None]
+    detalhes = " · ".join(html.escape(d) for d in detalhes if d)
+    # O 1º lugar não tem percentual; empate (diferença que arredonda para 0%) também não.
+    percentual = f"{(x['ppu'] - melhor) / melhor:.0%}"
+    diferenca = "" if posicao == 1 or percentual == "0%" else f"<div class='cmp-dif'>+{percentual}</div>"
+    classe = "cmp-linha" + (" cmp-farmazids" if x["farmazids"] else "")
+    circulo = "cmp-n cmp-n1" if posicao == 1 else "cmp-n"
+    dica = f" title='{html.escape(x['produto'], quote=True)}'" if x["produto"] else ""
+    return (
+        f"<div class='{classe}'{dica}><span class='{circulo}'>{posicao}</span>"
+        f"<span class='cmp-farmacia'>{html.escape(x['nome_farmacia'])}</span>"
+        f"<span class='cmp-detalhes'>{detalhes}</span>"
+        f"<span class='cmp-preco'><b>{reais_juntos(x['ppu'], unidade=True)}</b>{diferenca}</span></div>"
+    )
+
+
+def html_comparacao(comparacao):
+    """Cartão principal (os 3 mais baratos + a Farmazids) e as outras apresentações."""
+    grupo, remedio = comparacao["principal"], comparacao["remedio"]
+    melhor = grupo[0]["ppu"]
+    unidade = unidade_br(grupo[0]["unidade"]) if grupo[0]["unidade"] else "unidade"
+    linhas = [html_linha(i, x, melhor) for i, x in enumerate(grupo[:TOP], start=1)]
+    # A Farmazids aparece sempre: fora do top 3, entra no fim com a posição real.
+    linhas += [html_linha(i, x, melhor) for i, x in enumerate(grupo, start=1) if i > TOP and x["farmazids"]]
+    cartao = (
+        "<div class='cmp-cartao'><div class='cmp-titulo'>"
+        f"<b>{html.escape(nome_apresentacao(grupo, remedio))}</b><span>por {html.escape(unidade)}</span></div>"
+        f"{''.join(linhas)}</div>"
+    )
+    if not comparacao["outras"]:
+        return cartao
+    outras = []
+    for g in comparacao["outras"]:
+        x = g[0]
+        abrev = ABREVIADAS.get(x["unidade"], x["unidade"] or "un")
+        outras.append(
+            f"<div class='cmp-outra'><span>{html.escape(nome_apresentacao(g, remedio))}</span>"
+            f"<span><b>{reais_juntos(x['ppu'], unidade=True)}</b>/{html.escape(abrev)} · "
+            f"{html.escape(x['nome_farmacia'])}</span></div>"
+        )
+    return (cartao + "<div class='cmp-cartao cmp-outras'><div class='cmp-outras-titulo'>"
+            "Outras apresentações · mais barato de cada</div>" + "".join(outras) + "</div>")
 
 
 def so_grupo_principal(mensagem, comparacao):
-    """Com mais de um grupo, o gráfico mostra só o principal (o do destaque):
-    preço por comprimido e preço por ml não dividem o mesmo eixo."""
-    if not comparacao or len(comparacao["grupos"]) < 2:
+    """O gráfico mostra só a apresentação principal: preço por comprimido e preço
+    por ml não dividem o mesmo eixo."""
+    if not comparacao:
         return mensagem
-    x = max(comparacao["grupos"], key=len)[0]
+    x = comparacao["principal"][0]
     chave = (x["concentracao"], x["forma"], x["unidade"])
     colunas = [c.lower() for c in mensagem["colunas"]]
     indices = [colunas.index(c) if c in colunas else None for c in ("concentracao", "forma", "unidade")]
@@ -678,46 +753,6 @@ def so_grupo_principal(mensagem, comparacao):
         return (valores[0], (valores[1] or "").lower() or None, (valores[2] or "").lower() or None)
 
     return {**mensagem, "linhas": [linha for linha in mensagem["linhas"] if da_linha(linha) == chave]}
-
-
-def html_etiquetas(comparacao):
-    chips = etiquetas(comparacao)
-    return ("<div class='cmp-chips'>" + "".join(f"<span>{html.escape(c)}</span>" for c in chips) + "</div>"
-            if chips else "")
-
-
-def html_grupos(comparacao):
-    """Um cartão por grupo equivalente, com o ranking do mais barato ao mais caro."""
-    cartoes = []
-    for grupo in comparacao["grupos"]:
-        melhor, maior = grupo[0]["ppu"], grupo[-1]["ppu"]
-        itens = []
-        for x in grupo:
-            largura = max(4, round(100 * x["ppu"] / maior))
-            detalhe = [x["marca"] or (produto_curto(x["produto"], 34) if x["produto"] else None), embalagem(x),
-                       reais_juntos(x["caixa"]) if x["caixa"] is not None else None]
-            detalhe = " · ".join(html.escape(d) for d in detalhe if d)
-            if x["estoque"] == "true":
-                detalhe += "<span class='cmp-estoque'>● em estoque</span>"
-            elif x["estoque"] == "false":
-                detalhe += "<span class='cmp-esgotado'>○ esgotado</span>"
-            diferenca = ("<span class='cmp-selo'>mais barato</span>" if x["ppu"] == melhor
-                         else f"<span class='cmp-dif'>+{(x['ppu'] - melhor) / melhor:.0%}</span>")
-            sua = "<span class='cmp-sua'>sua farmácia</span>" if x["farmazids"] else ""
-            dica = f" title='{html.escape(x['produto'], quote=True)}'" if x["produto"] else ""
-            itens.append(
-                f"<li class='cmp-item{' cmp-farmazids' if x['farmazids'] else ''}'{dica}>"
-                f"<div class='cmp-esq'><div class='cmp-farmacia'>{html.escape(x['nome_farmacia'])}{sua}</div>"
-                f"<div class='cmp-barra'><span style='width:{largura}%'></span></div>"
-                f"<div class='cmp-detalhe'>{detalhe}</div></div>"
-                f"<div class='cmp-dir'><div class='cmp-valor'>{em_reais_unidade(x['ppu'])}</div>{diferenca}</div>"
-                "</li>"
-            )
-        cartoes.append(
-            f"<div class='cmp-grupo'><div class='cmp-titulo'>{html.escape(titulo_grupo(grupo, comparacao['remedio']))}"
-            f"</div><ol class='cmp-ranking'>{''.join(itens)}</ol></div>"
-        )
-    return "".join(cartoes)
 
 
 # ---------- Mensagens ----------
@@ -731,16 +766,14 @@ def limpar_texto(texto):
     return texto.replace("$", "\\$")
 
 
-def rodape(mensagem):
-    """Hora da mensagem e, nas respostas, quanto tempo levou."""
-    texto = mensagem["hora"]
-    if mensagem.get("coleta"):
-        texto = f"coleta de {mensagem['coleta']} · " + texto
+def rodape(mensagem, coleta=None):
+    """Hora da mensagem (ou, na comparação, a data da coleta) e quanto tempo levou."""
+    texto = f"Coleta de {coleta}" if coleta else mensagem["hora"]
     if mensagem.get("do_cache"):
         texto += " · resposta salva"
     elif mensagem.get("duracao") is not None:
         texto += f" · respondido em {mensagem['duracao']:.0f} s"
-    return f"<div class='hora'>{texto}</div>"
+    return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
 
 
 def mostrar(mensagem, chave):
@@ -752,15 +785,15 @@ def mostrar(mensagem, chave):
         with st.chat_message(papel, avatar=avatar):
             comparacao = ler_comparacao(mensagem) if papel == "assistant" and mensagem.get("colunas") else None
             if comparacao:
-                st.html(html_destaque(comparacao))
-            st.markdown(limpar_texto(mensagem["texto"]))
-            if comparacao:
-                st.html(html_etiquetas(comparacao) + html_grupos(comparacao))
+                st.html(html_frase(mensagem["texto"]) + html_comparacao(comparacao))
+            else:
+                st.markdown(limpar_texto(mensagem["texto"]))
             if mensagem.get("colunas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
                 if comparacao:
                     # Na comparação, a tabela completa fica recolhida.
-                    with st.expander(f"Ver todos os produtos ({comparacao['total']})", icon=":material/table:",
+                    total = comparacao["total"]
+                    with st.expander(f"Ver tabela completa ({total} produto{'s' if total != 1 else ''})",
                                      key=f"tabela-{chave}"):
                         st.dataframe(tabela, hide_index=True, width="stretch", column_config=LARGURAS)
                 else:
@@ -772,8 +805,7 @@ def mostrar(mensagem, chave):
                     with st.expander("Ver gráfico", expanded=True,
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
-            st.markdown(rodape({**mensagem, "coleta": comparacao and comparacao["coleta"]}),
-                        unsafe_allow_html=True)
+            st.markdown(rodape(mensagem, comparacao and comparacao["coleta"]), unsafe_allow_html=True)
 
 
 def texto_espera(segundos):
@@ -905,6 +937,7 @@ if st.session_state.pendente:
         "grafico": resultado.get("grafico"),  # sugestão de gráfico; a tela confere antes de desenhar
         # Confere aqui também, pela palavra "gráfico" na pergunta: sem ela, nada de gráfico.
         "pediu_grafico": bool(PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
+        "pergunta": st.session_state.mensagens[-1]["texto"],  # a comparação usa a apresentação pedida
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

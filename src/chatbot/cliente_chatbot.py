@@ -121,32 +121,45 @@ def _perguntar_simulado(pergunta, historico):
     pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
     if "compar" in pergunta.lower() or "barat" in pergunta.lower():
         # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql:
-        # dois grupos equivalentes, a Farmazids no meio e um produto sem quantidade no nome.
+        # paracetamol em 3 apresentações + 1 combinação, a Farmazids fora do top 3, um produto
+        # sem quantidade e a resposta em lista (a tela deve usar só a primeira frase).
         c = "2026-10-16"
+
+        def linha(farmacia, produto, marca, ppu, preco, qtd, conc, forma, unidade, estoque="true", coleta=c):
+            return [farmacia, produto, marca, ppu, preco, qtd, conc, forma, unidade, estoque, coleta]
+
         return {
             "ok": True,
-            "resposta": f"(modo simulado) Na dipirona 1 g, a São João é a mais barata: R$ 0,445 por comprimido, "
-                        f"com o genérico da EMS{contexto}. A Farmazids fica em segundo, 55% acima.",
-            "sql": "WITH ultima AS (...) ... WHERE LOWER(u.nome) LIKE '%dipirona%' ... LIMIT 50",
+            "resposta": f"- O paracetamol 750 mg sai mais barato na **FarmaPonte**, a R$ 0,34 por comprimido. "
+                        f"A Farmazids fica em 5º lugar{contexto}.\n- Na apresentação de 500 mg, a São João vence.",
+            "sql": "WITH ultima AS (...) ... WHERE LOWER(u.nome) LIKE '%paracetamol%' ... LIMIT 50",
             "colunas": ["farmacia", "produto", "marca", "preco_por_unidade", "preco", "quantidade", "concentracao",
                         "forma", "unidade", "em_estoque", "data_coleta"],
             "linhas": [
-                ["sao_joao", "Dipirona Monoidratada 1g 20 Comprimidos Genérico EMS", "EMS", "0.445", "8.9", "20.0",
-                 "1000mg", "comprimido", "comprimido", "true", c],
-                ["farmazids", "Dipirona 1g 10 Comprimidos Medley", None, "0.69", "6.9", "10.0", "1000mg",
-                 "comprimido", "comprimido", None, None],
-                ["farmaponte", "Novalgina 1g 10 Comprimidos", "Sanofi", "0.89", "8.9", "10.0", "1000mg",
-                 "comprimido", "comprimido", "true", c],
-                ["veracruz", "Novalgina 1g 20 Comprimidos", "Sanofi", "1.245", "24.9", "20.0", "1000mg",
-                 "comprimido", "comprimido", "false", c],
-                ["sao_paulo", "Novalgina 1g Comprimidos", "Sanofi", None, "12.9", None, "1000mg", "comprimido",
-                 None, "true", c],
-                ["farmaponte", "Dipirona Gotas 500mg/ml 20ml Prati-Donaduzzi", "Prati-Donaduzzi", "0.2995", "5.99",
-                 "20.0", "500mg/ml", "gotas", "ml", "true", c],
-                ["farmazids", "Novalgina Gotas 500mg/ml 20ml", "nan", "0.6450", "12.9", "20.0", "500mg/ml", "gotas",
-                 "ml", "None", "NaT"],
-                ["sao_joao", "Novalgina Gotas 500mg/ml 20ml Sanofi", "Sanofi", "0.6995", "13.99", "20.0",
-                 "500mg/ml", "gotas", "ml", "true", c],
+                linha("farmaponte", "Paracetamol 750mg 20 Comprimidos Genérico EMS", "EMS", "0.3355", "6.71", "20.0",
+                      "750mg", "comprimido", "comprimido"),
+                linha("sao_joao", "Paracetamol 750mg 30 Comprimidos Medley", "Medley", "0.3357", "10.07", "30.0",
+                      "750mg", "comprimido", "comprimido"),
+                linha("veracruz", "Tylenol 750mg 20 Comprimidos", "Kenvue", "0.4495", "8.99", "20.0", "750mg",
+                      "comprimido", "comprimido", "false"),
+                linha("sao_paulo", "Paracetamol 750mg 10 Comprimidos Neo Química", "Neo Química", "0.499", "4.99",
+                      "10.0", "750mg", "comprimido", "comprimido"),
+                linha("farmazids", "Paracetamol 750mg 20 Comprimidos Prati-Donaduzzi", None, "0.52", "10.4", "20.0",
+                      "750mg", "comprimido", "comprimido", None, None),
+                linha("sao_joao", "Paracetamol 500mg 20 Comprimidos Genérico EMS", "EMS", "0.12", "2.4", "20.0",
+                      "500mg", "comprimido", "comprimido"),
+                linha("farmaponte", "Paracetamol 500mg 10 Comprimidos Medley", "Medley", "0.199", "1.99", "10.0",
+                      "500mg", "comprimido", "comprimido"),
+                linha("farmaponte", "Paracetamol Gotas 200mg/ml 15ml", "Prati-Donaduzzi", "0.42", "6.3", "15.0",
+                      "200mg/ml", "gotas", "ml"),
+                linha("veracruz", "Tylenol Gotas 200mg/ml 15ml", "Kenvue", "1.26", "18.9", "15.0", "200mg/ml",
+                      "gotas", "ml"),
+                linha("sao_joao", "Tylex Paracetamol 500mg + Codeína 30mg 12 Comprimidos", "Cellera", "3.325",
+                      "39.9", "12.0", "500mg+30mg", "comprimido", "comprimido"),
+                linha("farmaponte", "Tylex Paracetamol 500mg + Codeína 30mg 24 Comprimidos", "Cellera", "2.9",
+                      "69.6", "24.0", "500mg+30mg", "comprimido", "comprimido"),
+                linha("sao_paulo", "Paracetamol 750mg Comprimidos", "nan", None, "7.9", None, "750mg", "comprimido",
+                      None, "None", "NaT"),
             ],
             "tipo": "dados",
             "grafico": {"tipo": "barras", "x": "farmacia", "y": ["preco_por_unidade"], "serie": None,

@@ -35,19 +35,24 @@
   --divisoria-caixa: #E3D3B0;
   --botao-enviar: var(--roxo);
   /* Comparação por unidade (cartões) */
-  --cartao-fundo: #FFFDF8;
-  --cartao-borda: #E6DAEE;
-  --barra-fundo: #EEE6F3;
-  --barra: #B9A6CC;
-  --barra-melhor: var(--roxo);
-  --texto-suave: #7A6A8A;
-  --selo-fundo: #F6EBD3;
-  --selo-texto: #7A5A22;
-  --chip-fundo: #F4EEF8;
-  --chip-texto: #5B4475;
-  --sua-fundo: #FBF1E0;
-  --sua-borda: var(--dourado);
-  --estoque-ok: #3E8456;
+  --cmp-frase: #2E1F3E;
+  --cmp-negrito: #351A4D;
+  --cmp-cartao: #FFFFFF;
+  --cmp-borda: #E6DAEE;
+  --cmp-divisoria: #F4EEF8;
+  --cmp-titulo: #482960;
+  --cmp-suave: #8A7A99;
+  --cmp-texto: #2E1F3E;
+  --cmp-vermelho: #B5533C;
+  --cmp-n1-fundo: #C2A05A;
+  --cmp-n1-texto: #FFFFFF;
+  --cmp-n-fundo: #F1EAF6;
+  --cmp-n-texto: #482960;
+  --cmp-sua-fundo: #FBF7FD;
+  --cmp-sua-nome: #482960;
+  --cmp-sua-n-fundo: #482960;
+  --cmp-sua-n-texto: #FFFFFF;
+  --cmp-botao-fundo: rgba(255, 255, 255, 0.6);
 }
 
 /* ---------- Fundo da área principal ---------- */
@@ -267,75 +272,74 @@
 .st-key-login [data-testid="InputInstructions"] { display: none; }
 
 /* ---------- Comparação por unidade ---------- */
-/* Destaque do mais barato, etiquetas e um cartão por grupo equivalente (montados no app.py). */
-.cmp-destaque {
-  background: var(--cartao-fundo); border: 1px solid var(--cartao-borda);
-  border-left: 4px solid var(--dourado); border-radius: 14px;
-  padding: 14px 18px; margin: 2px 0 6px; color: var(--texto-assistente);
+/* Frase, cartão com os 3 mais baratos (+ Farmazids) e outras apresentações (montados no app.py). */
+.cmp-frase { font-size: 15px; line-height: 1.6; color: var(--cmp-frase); margin: 0; }
+.cmp-frase b { color: var(--cmp-negrito); font-weight: 700; }
+.cmp-cartao {
+  background: var(--cmp-cartao); border: 1px solid var(--cmp-borda); border-radius: 12px;
+  padding: 12px 14px; margin-top: 10px; color: var(--cmp-texto);
 }
-.cmp-rotulo {
-  font-family: "Cinzel", serif; font-size: 0.74rem; letter-spacing: 0.12em;
-  text-transform: uppercase; color: var(--cor-lema);
+.cmp-titulo { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-bottom: 4px; }
+.cmp-titulo b { font-size: 14px; color: var(--cmp-titulo); }
+.cmp-titulo span { font-size: 12px; color: var(--cmp-suave); white-space: nowrap; }
+.cmp-linha {
+  display: grid; grid-template-columns: 22px 110px 1fr 84px; grid-template-areas: "n farmacia detalhes preco";
+  align-items: center; column-gap: 8px;
+  padding: 7px 0; font-size: 14px; border-top: 1px solid var(--cmp-divisoria);
 }
-.cmp-linha { display: flex; align-items: baseline; gap: 8px; margin: 2px 0; }
-.cmp-preco { font-size: 2rem; font-weight: 600; line-height: 1.15; color: var(--negrito-assistente); }
-.cmp-unid { font-size: 1rem; color: var(--texto-suave); }
-.cmp-quem { font-size: 1rem; }
-.cmp-contexto, .cmp-onde { font-size: 0.88rem; color: var(--texto-suave); margin-top: 2px; }
-.cmp-onde { font-style: italic; }
-
-.cmp-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 12px; }
-.cmp-chips span {
-  background: var(--chip-fundo); color: var(--chip-texto); border: 1px solid var(--cartao-borda);
-  border-radius: 999px; padding: 3px 11px; font-size: 0.8rem; line-height: 1.5;
+.cmp-n { grid-area: n; }
+.cmp-farmacia { grid-area: farmacia; }
+.cmp-detalhes { grid-area: detalhes; }
+.cmp-preco { grid-area: preco; }
+.cmp-n {
+  width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600; background: var(--cmp-n-fundo); color: var(--cmp-n-texto);
 }
-
-.cmp-grupo {
-  background: var(--cartao-fundo); border: 1px solid var(--cartao-borda); border-radius: 14px;
-  padding: 12px 16px 6px; margin-bottom: 12px; color: var(--texto-assistente);
+.cmp-n.cmp-n1 { background: var(--cmp-n1-fundo); color: var(--cmp-n1-texto); }
+.cmp-farmacia { font-weight: 700; overflow-wrap: anywhere; }
+.cmp-detalhes { font-size: 12px; color: var(--cmp-suave); }
+.cmp-preco { text-align: right; white-space: nowrap; }
+.cmp-preco b { font-weight: 700; }
+.cmp-dif { font-size: 12px; color: var(--cmp-vermelho); }
+/* Farmazids: fundo próprio; o padding lateral entra para o fundo não encostar no texto. */
+.cmp-linha.cmp-farmazids {
+  background: var(--cmp-sua-fundo); border-radius: 8px; border-top-color: transparent;
+  padding-left: 6px; padding-right: 6px; margin: 0 -6px;
 }
-.cmp-titulo { font-weight: 600; font-size: 0.95rem; margin-bottom: 6px; }
-/* !important: o Streamlit dá recuo e margem às listas dentro das mensagens. */
-.cmp-ranking { list-style: none; margin: 0 !important; padding: 0 !important; }
-.cmp-item {
-  display: flex; align-items: center; gap: 14px;
-  padding: 9px 8px !important; margin: 0 -8px !important; border-top: 1px solid var(--cartao-borda);
+.cmp-farmazids .cmp-farmacia { color: var(--cmp-sua-nome); }
+.cmp-farmazids .cmp-n, .cmp-farmazids .cmp-n.cmp-n1 { background: var(--cmp-sua-n-fundo); color: var(--cmp-sua-n-texto); }
+.cmp-cartao.cmp-outras { padding: 8px 14px; }
+.cmp-outras-titulo { font-size: 12px; color: var(--cmp-suave); margin-bottom: 2px; }
+.cmp-outra {
+  display: flex; justify-content: space-between; gap: 12px; font-size: 13px;
+  padding: 6px 0; border-top: 1px solid var(--cmp-divisoria);
 }
-.cmp-item:first-child { border-top: none; }
-.cmp-item.cmp-farmazids {
-  background: var(--sua-fundo); border-radius: 10px; border-top-color: transparent;
-  box-shadow: inset 3px 0 0 var(--sua-borda);
+.cmp-outra span:last-child { text-align: right; white-space: nowrap; }
+/* Botão "› Ver tabela completa (N produtos)" (o expander da tabela). */
+/* 10 px acima: o Streamlit já põe 16 px entre os elementos, então a margem desconta 6. */
+[class*="st-key-tabela-"] { margin-top: -6px; }
+[class*="st-key-tabela-"] details {
+  border: 1px solid var(--cmp-borda) !important; border-radius: 10px !important;
+  background: var(--cmp-botao-fundo) !important;
 }
-.cmp-item.cmp-farmazids + .cmp-item { border-top-color: transparent; }
-.cmp-esq { flex: 1; min-width: 0; }
-.cmp-farmacia { font-weight: 600; font-size: 0.95rem; display: flex; align-items: center; gap: 8px; }
-.cmp-sua {
-  font-family: "Cinzel", serif; font-size: 0.62rem; letter-spacing: 0.1em; text-transform: uppercase;
-  color: var(--selo-texto); border: 1px solid var(--sua-borda); border-radius: 999px; padding: 1px 7px;
-  white-space: nowrap;
-}
-.cmp-barra { height: 7px; background: var(--barra-fundo); border-radius: 999px; margin: 6px 0 5px; overflow: hidden; }
-.cmp-barra span { display: block; height: 100%; background: var(--barra); border-radius: 999px; }
-.cmp-item:first-child .cmp-barra span { background: var(--barra-melhor); }
-.cmp-detalhe { font-size: 0.8rem; color: var(--texto-suave); overflow-wrap: anywhere; }
-.cmp-estoque, .cmp-esgotado { margin-left: 8px; white-space: nowrap; }
-.cmp-estoque { color: var(--estoque-ok); }
-.cmp-dir { text-align: right; min-width: 92px; }
-.cmp-valor { font-weight: 600; font-size: 1.05rem; white-space: nowrap; }
-.cmp-dif { font-size: 0.8rem; color: var(--texto-suave); }
-.cmp-selo {
-  display: inline-block; font-size: 0.72rem; background: var(--selo-fundo); color: var(--selo-texto);
-  border-radius: 999px; padding: 1px 8px; margin-top: 2px; white-space: nowrap;
-}
+[class*="st-key-tabela-"] summary { padding: 8px 14px !important; font-size: 13px; color: var(--cmp-titulo); }
+[class*="st-key-tabela-"] summary p { font-size: 13px; color: var(--cmp-titulo); }
+/* Some a seta do Streamlit (e o espaço dela): o "›" vem antes do texto. */
+[class*="st-key-tabela-"] summary span:has(> [data-testid="stIconMaterial"]),
+[class*="st-key-tabela-"] summary [data-testid="stExpanderIcon"] { display: none; }
+[class*="st-key-tabela-"] summary p::before { content: "› "; }
+[class*="st-key-tabela-"] details[open] summary p::before { content: "⌄ "; }
+.hora.cmp-rodape { font-size: 12px; color: var(--cmp-suave); }
 
 /* ---------- Celular ---------- */
 @media (max-width: 640px) {
-  .cmp-destaque { padding: 12px 14px; }
-  .cmp-preco { font-size: 1.6rem; }
-  .cmp-grupo { padding: 10px 12px 4px; }
-  .cmp-item { gap: 10px; }
-  .cmp-dir { min-width: 78px; }
-  .cmp-valor { font-size: 0.98rem; }
+  /* No celular, os detalhes vão para baixo da farmácia (no máximo 2 linhas). */
+  .cmp-linha {
+    grid-template-columns: 22px 1fr 76px; grid-template-areas: "n farmacia preco" "n detalhes preco";
+    column-gap: 8px; row-gap: 0;
+  }
+  .cmp-outra span:first-child { flex: 1; }
+  .cmp-outra span:last-child { white-space: normal; max-width: 48%; }
 
   [data-testid="stMainBlockContainer"] { padding-left: 0.8rem; padding-right: 0.8rem; padding-bottom: 6rem; }
   [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho) { padding-top: 0.8rem; margin-bottom: 0.8rem; }

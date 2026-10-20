@@ -21,19 +21,24 @@
   --fundo-caixa: #261C33;
   --divisoria-caixa: #4A3A5A;
   --botao-enviar: #5A3778;
-  --cartao-fundo: #1F1729;
-  --cartao-borda: #3A2C4A;
-  --barra-fundo: #2E2340;
-  --barra: #6E5A84;
-  --barra-melhor: #B79AD6;
-  --texto-suave: #A496B3;
-  --selo-fundo: #3A2F1A;
-  --selo-texto: #E3CFA0;
-  --chip-fundo: #2C2238;
-  --chip-texto: #D9C7E8;
-  --sua-fundo: #2C2230;
-  --sua-borda: #8C7340;
-  --estoque-ok: #7FC79A;
+  --cmp-frase: #EDE6F2;
+  --cmp-negrito: #E3CFA0;
+  --cmp-cartao: #2A2036;
+  --cmp-borda: #3A2C4A;
+  --cmp-divisoria: #35293F;
+  --cmp-titulo: #D9C7E8;
+  --cmp-suave: #A496B3;
+  --cmp-texto: #EDE6F2;
+  --cmp-vermelho: #E58A72;
+  --cmp-n1-fundo: #C2A05A;
+  --cmp-n1-texto: #1A1324;
+  --cmp-n-fundo: #3A2C4A;
+  --cmp-n-texto: #D9C7E8;
+  --cmp-sua-fundo: #33263F;
+  --cmp-sua-nome: #CDB5E8;
+  --cmp-sua-n-fundo: #8E6BAE;
+  --cmp-sua-n-texto: #FFFFFF;
+  --cmp-botao-fundo: rgba(42, 32, 54, 0.6);
 }
 
 /* O tema do Streamlit continua claro (config.toml), então o texto dele
