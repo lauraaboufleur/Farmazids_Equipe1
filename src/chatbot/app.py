@@ -23,7 +23,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from cliente_chatbot import MODO_SIMULADO, perguntar
+from cliente_chatbot import MODO_SIMULADO, perguntar, sintetizar
 
 ASSETS = Path(__file__).parent / "assets"
 LOGO = str(ASSETS / "logo_farmazids.png")                    # símbolo redondo
@@ -124,6 +124,12 @@ VOZ = {
     "velocidade": 1.05,
     "tom": 1.0,
 }
+# Voz mais natural: Amazon Polly (voz neural pt-BR). Se ele falhar, a tela usa a voz
+# do navegador (VOZ, acima). Velocidade e pausa entre as frases vão no SSML.
+POLLY_VOZ = "Camila"
+POLLY_VELOCIDADE = "105%"
+POLLY_PAUSA = "300ms"
+POLLY_ESPERA_FALHA = 600  # depois de uma falha, quantos segundos esperar antes de tentar o Polly de novo
 
 # Depois desse tempo, o balão de espera explica por que está demorando.
 SEGUNDOS_AVISO_DEMORA = 15
@@ -812,17 +818,213 @@ def texto_para_fala(texto):
     return re.sub(r"\s+([.,;!?])", r"\1", re.sub(r"\s+", " ", frase)).strip()
 
 
-def rodape(mensagem, coleta=None, chave=None):
+# ---------- Fala da comparação (montada aqui, com os números do ranking) ----------
+ABERTURAS = ["Encontrei!", "Achei aqui.", "Vamos lá:"]
+NOMES_FALADOS = {  # como cada farmácia soa melhor na voz
+    "farmaponte": "Farma Ponte", "veracruz": "Drogaria Vera Cruz", "sao_joao": "São João",
+    "sao_paulo": "Drogaria São Paulo", "farmazids": "Farmazids",
+}
+ORDINAIS = ["primeiro", "segundo", "terceiro", "quarto", "quinto", "sexto", "sétimo", "oitavo", "nono", "décimo"]
+UNIDADES_FALADAS = {  # (singular, plural)
+    "comprimido": ("comprimido", "comprimidos"), "capsula": ("cápsula", "cápsulas"), "dragea": ("drágea", "drágeas"),
+    "ml": ("mililitro", "mililitros"), "g": ("grama", "gramas"), "dose": ("dose", "doses"), "sache": ("sachê", "sachês"),
+    "pastilha": ("pastilha", "pastilhas"), "ampola": ("ampola", "ampolas"), "seringa": ("seringa", "seringas"),
+    "adesivo": ("adesivo", "adesivos"), "flaconete": ("flaconete", "flaconetes"), "unidade": ("unidade", "unidades"),
+}
+MEDIDAS_FALADAS = {"mg": ("miligrama", "miligramas"), "mcg": ("micrograma", "microgramas"),
+                   "g": ("grama", "gramas"), "ui": ("unidade internacional", "unidades internacionais"),
+                   "ml": ("mililitro", "mililitros")}
+
+
+def numero_falado(x):
+    """12 -> "12"; 2.5 -> "2 vírgula 5"."""
+    return f"{x:g}".replace(".", " vírgula ")
+
+
+def preco_falado(valor):
+    """0.3355 -> "34 centavos"; 10.07 -> "10 reais e 7 centavos"; 1 -> "1 real"."""
+    centavos = round(valor * 100)
+    if centavos == 0:
+        return "menos de 1 centavo"
+    reais, centavos = divmod(centavos, 100)
+    partes = [f"{reais} {'real' if reais == 1 else 'reais'}"] if reais else []
+    if centavos:
+        partes.append(f"{centavos} {'centavo' if centavos == 1 else 'centavos'}")
+    return " e ".join(partes)
+
+
+def concentracao_falada(texto):
+    """"750mg" -> "750 miligramas"; "1000mg" -> "1 grama"; "200mg/ml" -> "200 miligramas por mililitro"."""
+    def parte(p):
+        m = re.match(r"^(\d+(?:\.\d+)?)(mg|mcg|ui|%|g)(?:/(\d+(?:\.\d+)?)?(ml|g|dose|gota))?$", p)
+        if not m:
+            return ""
+        n, u = float(m.group(1)), m.group(2)
+        if u == "mg" and n >= 1000 and n % 1000 == 0:
+            n, u = n / 1000, "g"
+        if u == "%":
+            falado = f"{numero_falado(n)} por cento"
+        else:
+            singular, plural = MEDIDAS_FALADAS[u]
+            falado = f"{numero_falado(n)} {singular if n == 1 else plural}"
+        if m.group(4):
+            qtd = float(m.group(3)) if m.group(3) else 1
+            singular, plural = MEDIDAS_FALADAS.get(m.group(4), (m.group(4), m.group(4) + "s"))
+            falado += f" por {singular}" if qtd == 1 else f" a cada {numero_falado(qtd)} {plural}"
+        return falado
+    partes = [parte(p) for p in str(texto or "").split("+")]
+    return " mais ".join(p for p in partes if p)
+
+
+def unidade_falada(unidade, quantidade=1):
+    singular, plural = UNIDADES_FALADAS.get(unidade, (unidade or "unidade", (unidade or "unidade") + "s"))
+    return singular if quantidade == 1 else plural
+
+
+def embalagem_falada(item):
+    """"numa caixa com 20 comprimidos por 6 reais e 71 centavos" (ou "num frasco com 15 mililitros...")."""
+    if item["quantidade"] is None or not item["unidade"]:
+        return ""
+    recipiente = {"ml": "num frasco", "g": "numa embalagem"}.get(item["unidade"], "numa caixa")
+    texto = f"{recipiente} com {numero_falado(item['quantidade'])} {unidade_falada(item['unidade'], item['quantidade'])}"
+    if item["caixa"] is not None:
+        texto += f" por {preco_falado(item['caixa'])}"
+    return texto
+
+
+def nome_falado(item):
+    return NOMES_FALADOS.get(item["farmacia"], item["nome_farmacia"])
+
+
+def fala_da_comparacao(comparacao, chave):
+    """Resumo falado da comparação principal. Devolve (texto, farmácia a destacar)."""
+    grupo = comparacao["principal"]
+    melhor = grupo[0]
+    unidade = unidade_falada(melhor["unidade"])
+    embalagem = embalagem_falada(melhor)
+    detalhe = f"{preco_falado(melhor['ppu'])} por {unidade}" + (f", {embalagem}" if embalagem else "")
+    frases = []
+    if melhor["farmazids"]:
+        frases.append(f"Boa notícia: a Farmazids é a mais barata, com {detalhe}.")
+    else:
+        abertura = ABERTURAS[(chave if isinstance(chave, int) else 0) % len(ABERTURAS)]
+        remedio = (comparacao["remedio"] or "").lower()
+        feminino = remedio.endswith("a")  # a dipirona, o paracetamol
+        produto = " ".join(p for p in (remedio, concentracao_falada(melhor["concentracao"])) if p)
+        if produto:
+            artigo = "a" if feminino else "o"
+            artigo = artigo if abertura.endswith(":") else artigo.upper()  # "Vamos lá: o paracetamol"
+            frases.append(f"{abertura} {artigo} {produto} está mais "
+                          f"{'barata' if feminino else 'barato'} na {nome_falado(melhor)}: {detalhe}.")
+        else:
+            frases.append(f"{abertura} O mais barato está na {nome_falado(melhor)}: {detalhe}.")
+    seguintes = [f"a {nome_falado(x)}, com {preco_falado(x['ppu'])}" for x in grupo[1:TOP]]
+    if len(seguintes) == 2:
+        frases.append(f"Logo depois vêm {seguintes[0]}, e {seguintes[1]}.")
+    elif seguintes:
+        frases.append(f"Logo depois vem {seguintes[0]}.")
+    posicao = next((i for i, x in enumerate(grupo, start=1) if x["farmazids"]), None)
+    if posicao and posicao > TOP:
+        lugar = ORDINAIS[posicao - 1] if posicao <= len(ORDINAIS) else f"{posicao}º"
+        frases.append(f"A Farmazids aparece em {lugar} lugar, com {preco_falado(grupo[posicao - 1]['ppu'])}.")
+    return " ".join(frases), nome_falado(melhor)
+
+
+def fala_da_mensagem(mensagem, comparacao, chave):
+    """(texto, destaque) que o "Ouvir" lê: na comparação, o resumo da tela; senão, o campo
+    "fala" da redigir-resposta; sem ele, a primeira frase da resposta."""
+    if comparacao:
+        return fala_da_comparacao(comparacao, chave)
+    if limpo(mensagem.get("fala")):
+        return texto_para_fala_completo(mensagem["fala"]), None
+    return texto_para_fala(mensagem["texto"]), None
+
+
+def texto_para_fala_completo(texto):
+    """O campo "fala" inteiro (já vem escrito para o ouvido), só limpo de símbolos."""
+    texto = PALAVRAS_VAZIAS.sub("", texto or "").replace("**", "")
+    texto = re.sub(r"R\$\s?(\d{1,3}(?:\.\d{3})+|\d+)(?:,(\d+))?", reais_falados, texto)
+    texto = re.sub(r"[*_`#>]", "", texto)
+    return re.sub(r"\s+([.,;!?])", r"\1", re.sub(r"\s+", " ", texto)).strip()
+
+
+# ---------- Áudio do Amazon Polly ----------
+def ssml_da_fala(texto, destaque=None):
+    """Pausa curta entre as frases, velocidade levemente acima do normal e ênfase leve
+    (um pouco mais de volume) no nome da farmácia mais barata."""
+    frases = [html.escape(f, quote=False) for f in re.split(r"(?<=[.!?:])\s+", texto) if f.strip()]
+    corpo = f'<break time="{POLLY_PAUSA}"/>'.join(frases)
+    if destaque:
+        nome = html.escape(destaque, quote=False)
+        corpo = corpo.replace(nome, f'<prosody volume="+3dB">{nome}</prosody>', 1)
+    return f'<speak><prosody rate="{POLLY_VELOCIDADE}">{corpo}</prosody></speak>'
+
+
+@st.cache_data(show_spinner=False, max_entries=500)
+def _audio_polly(ssml):
+    """Guardado pelo texto: o Polly não é chamado duas vezes para a mesma fala. Uma falha
+    levanta exceção, e exceção não fica no cache (a próxima vez tenta de novo)."""
+    return sintetizar(ssml, POLLY_VOZ)
+
+
+@st.cache_resource
+def _estado_polly():
+    """Depois de uma falha, a voz do navegador é usada por um tempo. Fica no cache_resource
+    porque o app.py roda de novo a cada interação (uma variável comum voltaria a zero)."""
+    return {"parado_ate": 0.0}
+
+
+def audio_da_fala(texto, destaque=None):
+    """(bytes, tipo) do Polly, ou None para a tela usar a voz do navegador. Nunca dá erro na tela."""
+    estado = _estado_polly()
+    if not texto or time.time() < estado["parado_ate"]:
+        return None
+    try:
+        return _audio_polly(ssml_da_fala(texto, destaque))
+    except Exception as erro:
+        try:  # o destaque usa um recurso de SSML; sem ele, a voz ainda sai do Polly
+            if destaque:
+                return _audio_polly(ssml_da_fala(texto))
+        except Exception:
+            pass
+        print(f"[chatbot] Polly falhou, usando a voz do navegador por {POLLY_ESPERA_FALHA // 60} min: {erro!r}")
+        estado["parado_ate"] = time.time() + POLLY_ESPERA_FALHA
+        return None
+
+
+def audio_sob_demanda(chave, fala, destaque):
+    """O Polly só é chamado quando a fala vai ser ouvida. O "Ouvir" (ou a leitura automática
+    de uma pergunta feita por voz) clica num botão escondido desta resposta; o app roda de
+    novo, e aqui o áudio é gerado e posto num player escondido, que o assets/voz.js toca.
+    Depois disso, a resposta continua com o áudio (do cache, sem chamar o Polly de novo).
+    Devolve a origem da voz: "polly" (áudio pronto), "sob-demanda" (o Polly será chamado
+    no clique) ou "navegador" (o Polly falhou ou está em pausa depois de uma falha)."""
+    com_audio = st.session_state.setdefault("respostas_com_audio", set())
+    if st.button("Gerar áudio", key=f"pedir-audio-{chave}"):  # escondido pelo CSS
+        com_audio.add(chave)
+    if chave not in com_audio:
+        return "navegador" if time.time() < _estado_polly()["parado_ate"] else "sob-demanda"
+    audio = audio_da_fala(fala, destaque)
+    if not audio:
+        return "navegador"
+    with st.container(key=f"audio-{chave}"):
+        st.audio(audio[0], format=audio[1])
+    return "polly"
+
+
+def rodape(mensagem, coleta=None, chave=None, fala="", origem=""):
     """Hora da mensagem (ou, na comparação, a data da coleta), quanto tempo levou e,
-    nas respostas, o botão "Ouvir" (o assets/voz.js cuida dele)."""
+    nas respostas, o botão "Ouvir" (o assets/voz.js cuida dele). origem diz de onde vem
+    a voz ("polly", "sob-demanda" ou "navegador"), para a dica do botão e para conferir."""
     texto = f"Coleta de {coleta}" if coleta else mensagem["hora"]
     if mensagem.get("do_cache"):
         texto += " · resposta salva"
     elif mensagem.get("duracao") is not None:
         texto += f" · respondido em {mensagem['duracao']:.0f} s"
-    fala = texto_para_fala(mensagem["texto"]) if chave is not None else ""
-    if fala:
-        texto += (f" <button type='button' class='voz-ouvir' data-id='{chave}' "
+    if chave is not None and fala:
+        dica = "Voz do navegador" if origem == "navegador" else f"Voz: Amazon Polly ({POLLY_VOZ})"
+        texto += (f" <button type='button' class='voz-ouvir' data-id='{chave}' data-origem='{origem}' "
+                  f"title='{html.escape(dica, quote=True)}' "
                   f"data-fala='{html.escape(fala, quote=True)}'>🔊 Ouvir</button>")
     return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
 
@@ -857,8 +1059,11 @@ def mostrar(mensagem, chave):
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
             # "Ouvir" só nas respostas (não na pergunta nem nas boas-vindas).
-            chave_fala = chave if papel == "assistant" and chave != "inicio" else None
-            st.html(rodape(mensagem, comparacao and comparacao["coleta"], chave_fala))
+            fala, origem = "", ""
+            if papel == "assistant" and chave != "inicio":
+                fala, destaque = fala_da_mensagem(mensagem, comparacao, chave)
+                origem = audio_sob_demanda(chave, fala, destaque)
+            st.html(rodape(mensagem, comparacao and comparacao["coleta"], chave, fala, origem))
 
 
 def texto_espera(segundos):
@@ -992,6 +1197,7 @@ if st.session_state.pendente:
         # Confere aqui também, pela palavra "gráfico" na pergunta: sem ela, nada de gráfico.
         "pediu_grafico": bool(PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
         "pergunta": st.session_state.mensagens[-1]["texto"],  # a comparação usa a apresentação pedida
+        "fala": resultado.get("fala"),  # a resposta escrita para ser ouvida (redigir-resposta)
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

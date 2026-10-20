@@ -111,7 +111,8 @@
         "linhas": [],
         "mb_lidos": 0,
         "tipo": "sem_dados",
-        "grafico": null
+        "grafico": null,
+        "fala": null
       },
       "End": true
     },
@@ -165,7 +166,8 @@
         "linhas": [],
         "mb_lidos": 0,
         "tipo": "teorica",
-        "grafico": null
+        "grafico": null,
+        "fala": null
       },
       "End": true
     },
@@ -317,7 +319,8 @@
       },
       "ResultSelector": {
         "resposta.$": "$.Payload.resposta",
-        "grafico.$": "$.Payload.grafico"
+        "grafico.$": "$.Payload.grafico",
+        "fala.$": "$.Payload.fala"
       },
       "ResultPath": "$.final",
       "Retry": [
@@ -354,7 +357,8 @@
         "linhas.$": "$.resultado.linhas",
         "mb_lidos.$": "$.resultado.mb_lidos",
         "tipo": "dados",
-        "grafico.$": "$.final.grafico"
+        "grafico.$": "$.final.grafico",
+        "fala.$": "$.final.fala"
       },
       "End": true
     },

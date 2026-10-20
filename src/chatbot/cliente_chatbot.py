@@ -9,6 +9,8 @@ Configuração por variáveis de ambiente (nada de credencial no código):
 - CHATBOT_MODO_SIMULADO = "1" (simulado) ou "0" (real)
 - CHATBOT_STATE_MACHINE_ARN = ARN da máquina Expressa
 - CHATBOT_CACHE_MINUTOS = por quantos minutos guardar uma resposta (padrão 30; 0 desliga)
+- CHATBOT_POLLY_SIMULADO = no modo simulado, "ok" (padrão: um áudio de teste) ou "falha"
+  (finge que o Polly falhou, para testar a volta para a voz do navegador)
 
 Dois cuidados com o tempo de resposta:
 - o cliente do boto3 é criado uma vez só e reaproveitado. Criar um novo a cada
@@ -23,10 +25,12 @@ Memória da conversa: junto com a pergunta vai o histórico das últimas trocas
 para o backend entender perguntas como "e na São João?"; nunca vai para a tela.
 """
 
+import io
 import json
 import os
 import threading
 import time
+import wave
 from functools import lru_cache
 
 REGIAO = "us-east-2"
@@ -191,6 +195,7 @@ def _perguntar_simulado(pergunta, historico):
         "ok": True,
         "resposta": f"(modo simulado) Você perguntou: \"{pergunta}\"{contexto}. "
                     "Quando o backend estiver ligado, a resposta de verdade aparece aqui.",
+        "fala": "Este é o modo de teste. Na São João, a dipirona de 500 miligramas sai por 4 reais e 19 centavos.",
         "sql": "SELECT farmacia, nome, preco_pix, preco_cartao, em_estoque, data_coleta\n"
                "FROM vw_precos_concorrentes\n"
                "WHERE lower(nome) LIKE '%dipirona%'\n"
@@ -246,6 +251,8 @@ def _perguntar_aws(pergunta, historico):
         "tipo": saida.get("tipo"),
         # Sugestão de gráfico da redigir-resposta. A máquina antiga não manda: fica None.
         "grafico": saida.get("grafico"),
+        # A resposta escrita para ser ouvida (botão "Ouvir"). A máquina antiga não manda: fica None.
+        "fala": saida.get("fala"),
     }
 
 
@@ -281,3 +288,38 @@ def perguntar(pergunta, historico=None):
     print(f"[chatbot] {resultado['duracao']:.1f} s | ok={resultado['ok']} | "
           f"historico={len(historico)} | {pergunta[:60]}")
     return resultado
+
+
+# ---------- Voz: Amazon Polly ----------
+@lru_cache(maxsize=1)
+def _cliente_polly():
+    """Mesmas credenciais e região do Step Functions."""
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client("polly", region_name=REGIAO,
+                        config=Config(connect_timeout=3, read_timeout=10, retries={"max_attempts": 1}))
+
+
+def _audio_de_teste(ssml):
+    """Modo simulado: um WAV silencioso, mais longo quanto maior o texto (para testar o "Parar")."""
+    segundos = min(6.0, 0.5 + len(ssml) / 200)
+    saida = io.BytesIO()
+    with wave.open(saida, "wb") as arquivo:
+        arquivo.setnchannels(1)
+        arquivo.setsampwidth(2)
+        arquivo.setframerate(8000)
+        arquivo.writeframes(b"\x00\x00" * int(8000 * segundos))
+    return saida.getvalue(), "audio/wav"
+
+
+def sintetizar(ssml, voz):
+    """Áudio da fala pelo Amazon Polly (voz neural pt-BR). Devolve (bytes, tipo do áudio).
+    Levanta exceção se o Polly falhar: quem chama decide o que fazer (a tela usa a voz do navegador)."""
+    if MODO_SIMULADO:
+        if os.environ.get("CHATBOT_POLLY_SIMULADO", "ok") == "falha":
+            raise RuntimeError("Polly simulado: falha de propósito (CHATBOT_POLLY_SIMULADO=falha)")
+        return _audio_de_teste(ssml)
+    resposta = _cliente_polly().synthesize_speech(
+        Engine="neural", LanguageCode="pt-BR", VoiceId=voz, OutputFormat="mp3", TextType="ssml", Text=ssml)
+    return resposta["AudioStream"].read(), "audio/mpeg"

@@ -1,6 +1,10 @@
 // Voz no chatbot da Farmazids, só com recursos do navegador (sem AWS e sem custo):
 // - pesquisa por voz: botão de microfone na caixa de pergunta (reconhecimento de fala);
-// - leitura da resposta: botões "Ouvir" no rodapé das respostas (síntese de fala).
+// - leitura da resposta: botões "Ouvir" no rodapé das respostas. O áudio do Amazon Polly
+//   só é gerado quando vai ser ouvido: o "Ouvir" clica num botão escondido da resposta
+//   (.st-key-pedir-audio-N), o app.py gera o áudio e o põe num player escondido
+//   (.st-key-audio-N), e ele é tocado aqui. Se o Polly falhar, demorar demais ou o
+//   áudio não tocar, usa a voz do navegador (síntese de fala).
 // O app.py carrega este arquivo a cada execução e troca __CONFIG__ pela configuração
 // da voz (VOZ, no app.py). Ele só se instala uma vez por página.
 (function () {
@@ -11,6 +15,8 @@
   const estado = {
     lidas: new Set(),     // respostas que já existiam (não são lidas sozinhas)
     idLendo: null,        // resposta que está sendo lida agora
+    audio: null,          // áudio do Polly tocando agora
+    esperando: null,      // resposta cujo áudio foi pedido ao app e ainda não chegou
     ouvindo: false,       // microfone ligado
     porVoz: false,        // a última pergunta foi feita por voz: ler a resposta sozinha
   };
@@ -60,16 +66,90 @@
   }
 
   function pararLeitura() {
-    if (!sintese) return;
-    sintese.cancel();
+    estado.esperando = null;
+    if (estado.audio) {
+      estado.audio.pause();
+      estado.audio.currentTime = 0;
+      estado.audio = null;
+    }
+    if (sintese) sintese.cancel();
     if (estado.idLendo !== null) marcar(estado.idLendo, false);
     estado.idLendo = null;
   }
 
+  function terminou(id) {
+    if (estado.idLendo === id) {
+      marcar(id, false);
+      estado.idLendo = null;
+      estado.audio = null;
+    }
+  }
+
+  function audioDa(id) {
+    return document.querySelector(".st-key-audio-" + id + " audio");
+  }
+
+  function tocar(audio, botao, inicio) {
+    const id = botao.dataset.id;
+    estado.idLendo = id;
+    estado.audio = audio;
+    marcar(id, true);
+    audio.currentTime = 0;
+    audio.onended = () => terminou(id);
+    audio.play().then(() => {
+      const espera = inicio ? " (" + Math.round(performance.now() - inicio) + " ms depois do pedido)" : "";
+      console.info("[voz] lendo com o Amazon Polly" + espera);
+    }).catch((erro) => {
+      console.warn("[voz] o áudio do Polly não tocou; usando a voz do navegador", erro);
+      estado.audio = null;
+      botao.dataset.origem = "navegador";
+      botao.title = "Voz do navegador";
+      lerNoNavegador(botao);
+    });
+  }
+
   function ler(botao) {
+    pararLeitura();
+    const id = botao.dataset.id;
+    const audio = audioDa(id);
+    if (audio) tocar(audio, botao, null);
+    else if (botao.dataset.origem === "sob-demanda") pedirAudio(botao);
+    else lerNoNavegador(botao);
+  }
+
+  // Pede o áudio ao app (botão escondido da resposta) e espera o player chegar.
+  function pedirAudio(botao) {
+    const id = botao.dataset.id;
+    const pedido = document.querySelector(".st-key-pedir-audio-" + id + " button");
+    if (!pedido) {
+      lerNoNavegador(botao);
+      return;
+    }
+    estado.idLendo = id;
+    estado.esperando = id;
+    marcar(id, true); // já vira "Parar": um segundo toque cancela o pedido
+    pedido.click();
+    esperarAudio(id, performance.now(), 80); // até 8 s
+  }
+
+  function esperarAudio(id, inicio, tentativas) {
+    if (estado.esperando !== id) return; // a pessoa clicou em "Parar"
+    const botao = botaoDa(id);
+    const audio = audioDa(id);
+    if (audio && botao) {
+      estado.esperando = null;
+      tocar(audio, botao, inicio);
+    } else if (botao && (botao.dataset.origem === "navegador" || tentativas <= 0)) {
+      estado.esperando = null; // o Polly falhou (o app avisou) ou demorou demais
+      lerNoNavegador(botao);
+    } else {
+      setTimeout(() => esperarAudio(id, inicio, tentativas - 1), 100);
+    }
+  }
+
+  function lerNoNavegador(botao) {
     const texto = botao.dataset.fala;
     if (!sintese || !texto) return;
-    pararLeitura();
     const fala = new SpeechSynthesisUtterance(texto);
     fala.lang = CONFIG.idioma;
     fala.rate = CONFIG.velocidade;
@@ -77,19 +157,17 @@
     vozEscolhida = vozEscolhida || escolherVoz();
     if (vozEscolhida) fala.voice = vozEscolhida;
     const id = botao.dataset.id;
-    fala.onend = fala.onerror = () => {
-      if (estado.idLendo === id) {
-        marcar(id, false);
-        estado.idLendo = null;
-      }
-    };
+    fala.onend = fala.onerror = () => terminou(id);
     estado.idLendo = id;
     marcar(id, true);
+    console.info("[voz] lendo com a voz do navegador:", vozEscolhida ? vozEscolhida.name : "padrão do aparelho");
     sintese.speak(fala);
   }
 
+  // Sem esta classe, os botões "Ouvir" ficam escondidos (CSS). Com o Polly, há áudio
+  // mesmo sem a voz do navegador; então ela entra sempre.
+  document.documentElement.classList.add("voz-tts");
   if (sintese) {
-    document.documentElement.classList.add("voz-tts"); // sem isso, os botões "Ouvir" ficam escondidos
     vozEscolhida = escolherVoz();
     sintese.onvoiceschanged = () => { vozEscolhida = escolherVoz(); };
   }

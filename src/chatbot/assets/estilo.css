@@ -334,6 +334,9 @@
 /* ---------- Voz (assets/voz.js) ---------- */
 /* Container do script da voz: não aparece nem ocupa espaço. */
 .st-key-voz { display: none; }
+/* Áudio do Amazon Polly de cada resposta e o botão que pede esse áudio ao app: o voz.js
+   usa os dois pelo "Ouvir"; nenhum aparece. */
+[class*="st-key-audio-"], [class*="st-key-pedir-audio-"] { display: none; }
 /* Microfone dentro da caixa, à esquerda do enviar: mesmo tamanho e cor do círculo da pessoa. */
 .voz-mic {
   position: absolute; right: 99px; top: 50%; transform: translateY(-50%);

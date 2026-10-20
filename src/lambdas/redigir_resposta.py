@@ -4,13 +4,16 @@ Recebe:  {"pergunta": "...", "colunas": ["..."], "linhas": [[...], ...], "histor
          historico é opcional: lista de {"pergunta", "resposta", "sql"} das últimas
          trocas, da mais antiga para a mais recente. Aqui só entram a pergunta e a
          resposta resumida. Sem histórico, funciona como antes.
-Devolve: {"resposta": "...", "grafico": {...} ou null}
+Devolve: {"resposta": "...", "grafico": {...} ou null, "fala": "..." ou null}
          grafico é a sugestão de gráfico para a tela:
          {"tipo": "barras" | "linha", "x": coluna, "y": [colunas de valores],
           "serie": coluna que separa as linhas (ou null), "pedido": true}.
          Só há gráfico quando a pergunta pede ("mostra em gráfico", "faz um
          gráfico"...). Sem pedido, o modelo nem recebe as instruções de gráfico
          (economiza tokens) e grafico vem null. A chave vem sempre.
+         fala é a mesma resposta escrita para ser ouvida (botão "Ouvir" da tela).
+         Vem null nas comparações por unidade, porque nelas a tela monta a fala com
+         os números do ranking. A chave também vem sempre (a máquina lê $.Payload.fala).
 """
 import os
 import re
@@ -26,6 +29,7 @@ TROCAS_NO_HISTORICO = 3
 TIPOS_GRAFICO = {"barras", "linha"}
 MAXIMO_VALORES = 3  # quantas colunas de valores um gráfico pode ter
 PEDIU_GRAFICO = re.compile(r"gr[áa]fico", re.IGNORECASE)  # a tela confere com a mesma regra
+PRECO_POR_UNIDADE = re.compile(r"preco(_\w+)?_por_unidade$", re.IGNORECASE)  # comparação por unidade
 
 bedrock = boto3.client(
     "bedrock-runtime", region_name=REGION, config=Config(retries={"max_attempts": 4, "mode": "adaptive"})
@@ -56,6 +60,14 @@ SYSTEM = (
     "Entregue sempre pela ferramenta responder."
 )
 
+# Só vai para o modelo quando não é comparação por unidade (aí a tela monta a fala).
+INSTRUCOES_FALA = (
+    "\n\nFala: além da resposta escrita, escreva no campo fala a mesma resposta para ser ouvida, como numa "
+    "conversa: curta (no máximo 2 frases), sem tabelas, listas, símbolos nem siglas, com números e unidades "
+    "por extenso do jeito que se fala (ex.: '34 centavos', '10 reais e 7 centavos', '500 miligramas', "
+    "'quinto lugar'; nunca 'R$', 'mg' ou 'ml')."
+)
+
 # Só vai para o modelo quando a pergunta pede gráfico.
 INSTRUCOES_GRAFICO = (
     "\n\nGráfico: a pergunta pediu um gráfico. Além da resposta, sugira o gráfico que melhor mostra o "
@@ -78,6 +90,7 @@ INSTRUCOES_GRAFICO = (
 # A ferramenta obriga o modelo a devolver a resposta (e o gráfico, quando pedido)
 # separados, já em JSON, sem precisar procurar o JSON no meio do texto.
 RESPOSTA = {"type": "string", "description": "Texto da resposta, em português."}
+FALA = {"type": "string", "description": "A mesma resposta escrita para ser ouvida, curta e com números por extenso."}
 GRAFICO = {
     "type": ["object", "null"],
     "description": "Sugestão de gráfico, ou null quando o resultado não serve para gráfico.",
@@ -91,9 +104,13 @@ GRAFICO = {
 }
 
 
-def ferramenta(com_grafico):
-    """Sem pedido de gráfico, a ferramenta só tem a resposta."""
-    propriedades = {"resposta": RESPOSTA, "grafico": GRAFICO} if com_grafico else {"resposta": RESPOSTA}
+def ferramenta(com_grafico, com_fala):
+    """A resposta sempre; o gráfico só quando pedido; a fala só fora da comparação por unidade."""
+    propriedades = {"resposta": RESPOSTA}
+    if com_fala:
+        propriedades["fala"] = FALA
+    if com_grafico:
+        propriedades["grafico"] = GRAFICO
     descricao = "Entrega a resposta para o usuário" + (" e a sugestão de gráfico." if com_grafico else ".")
     return {
         "tools": [{"toolSpec": {
@@ -155,6 +172,7 @@ def lambda_handler(event, context):
     historico = event.get("historico") or []
     rotulo = "Pergunta atual" if historico else "Pergunta"
     pediu_grafico = bool(PEDIU_GRAFICO.search(event["pergunta"]))
+    com_fala = not any(PRECO_POR_UNIDADE.search(c) for c in colunas)
     mensagem = (
         f"{texto_historico(historico)}"
         f"{rotulo}: {event['pergunta']}\n\n"
@@ -163,10 +181,10 @@ def lambda_handler(event, context):
     )
     resp = bedrock.converse(
         modelId=MODEL_ID,
-        system=[{"text": SYSTEM + (INSTRUCOES_GRAFICO if pediu_grafico else "")}],
+        system=[{"text": SYSTEM + (INSTRUCOES_FALA if com_fala else "") + (INSTRUCOES_GRAFICO if pediu_grafico else "")}],
         messages=[{"role": "user", "content": [{"text": mensagem}]}],
         inferenceConfig={"maxTokens": 4000},
-        toolConfig=ferramenta(pediu_grafico),
+        toolConfig=ferramenta(pediu_grafico, com_fala),
     )
     conteudo = resp["output"]["message"]["content"]
     entrada = next((b["toolUse"]["input"] for b in conteudo if "toolUse" in b), {})
@@ -175,4 +193,5 @@ def lambda_handler(event, context):
     if not texto:
         raise ValueError("O Bedrock não devolveu resposta.")  # a máquina tenta de novo (Retry)
     grafico = validar_grafico(entrada.get("grafico"), colunas, linhas) if pediu_grafico else None
-    return {"resposta": texto, "grafico": grafico}
+    fala = (entrada.get("fala") or "").strip() if com_fala else ""
+    return {"resposta": texto, "grafico": grafico, "fala": fala or None}
