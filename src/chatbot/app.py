@@ -1011,6 +1011,64 @@ def texto_farmacias_sem_vendas(texto, resultado, pergunta, anteriores):
     return texto  # outro assunto (ex.: preços da São João): nada a explicar
 
 
+# ---------- Oferta de ver os preços (depois de "A base de vendas não inclui...") ----------
+# Palavras que não são o remédio numa pergunta de vendas ("Quanto a São João vendeu de dipirona em janeiro?").
+NAO_SAO_REMEDIO = {
+    "venda", "vendas", "vendeu", "venderam", "vendido", "vendidos", "vendida", "vendidas", "quanto", "quantos",
+    "quantas", "qual", "quais", "total", "valor", "faturamento", "receita", "mes", "meses", "ano", "periodo",
+    "semestre", "trimestre", "farmacia", "farmacias", "drogaria", "unidades", "remedio", "remedios", "produto",
+    "produtos", "janeiro", "fevereiro", "marco", "abril", "maio", "junho", "julho", "agosto", "setembro",
+    "outubro", "novembro", "dezembro", "sao", "joao", "paulo", "farmaponte", "veracruz", "farmazids", "cada",
+}
+OFERTA_PRECOS = "posso mostrar os preços coletados"
+# Resposta curta de confirmação a uma oferta ("sim", "pode", "quero", "mostra"...).
+CONFIRMACAO = re.compile(r"^(?:sim|pode|quero|mostra|mostre|mostrar|claro|ok|okay|beleza|isso|manda|vai|"
+                         r"por|favor|ser|pfv|pf|obrigad[oa])(?:\s+(?:sim|pode|quero|mostra|mostre|mostrar|claro|"
+                         r"ok|okay|beleza|isso|manda|vai|por|favor|ser|pfv|pf|obrigad[oa]|os|precos|eles))*$")
+
+
+def remedio_da_pergunta(pergunta):
+    """O remédio de uma pergunta de vendas: a primeira palavra depois de "de/da/do" que não é
+    farmácia, mês nem palavra de vendas (com acento, como veio). None se não achar."""
+    palavras = re.findall(r"[A-Za-zÀ-ÿ][\wÀ-ÿ-]*", pergunta or "")
+    for anterior, palavra in zip(palavras, palavras[1:]):
+        if sem_acento(anterior) in ("de", "da", "do", "das", "dos") and len(palavra) >= 4 \
+                and sem_acento(palavra) not in NAO_SAO_REMEDIO:
+            return palavra.lower()
+    return None
+
+
+def oferta_de_precos(texto, pergunta):
+    """Se a resposta ofereceu os preços ("Para essa farmácia, posso mostrar os preços coletados."),
+    o botão e a pergunta completa da oferta: {"rotulo": ..., "pergunta": ...}; senão, None."""
+    if OFERTA_PRECOS not in (texto or ""):
+        return None
+    fora = farmacias_citadas(pergunta, FARMACIAS_SEM_VENDAS)
+    if not fora:
+        return None
+    onde = " e ".join(f"na {f}" for f in fora)
+    remedio = remedio_da_pergunta(pergunta)
+    if remedio:
+        artigo = "da" if remedio.endswith("a") else "do"  # a dipirona, o paracetamol
+        return {"rotulo": f"Ver preços de {remedio} {onde}",
+                "pergunta": f"Quais os preços {artigo} {remedio} {onde}?"}
+    return {"rotulo": f"Ver preços {onde}", "pergunta": f"Quais os preços coletados {onde}?"}
+
+
+def pergunta_da_confirmacao(nova, mensagens):
+    """"sim" (ou "pode", "quero", "mostra"...) logo depois de uma oferta vira a pergunta completa dela."""
+    anterior = mensagens[-1] if mensagens else None
+    if anterior and anterior["papel"] == "assistant" and anterior.get("oferta") \
+            and CONFIRMACAO.match(" ".join(re.findall(r"\w+", sem_acento(nova))) or "-"):
+        return anterior["oferta"]["pergunta"]
+    return nova
+
+
+def html_oferta(oferta):
+    return (f"<button type='button' class='oferta-botao' data-pergunta='{html.escape(oferta['pergunta'], quote=True)}'>"
+            f"{html.escape(oferta['rotulo'])}</button>")
+
+
 MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro",
          "outubro", "novembro", "dezembro"]
 
@@ -1344,6 +1402,9 @@ def mostrar(mensagem, chave):
             aviso = html_aviso_vendas(mensagem) if papel == "assistant" else ""
             if aviso:
                 st.html(aviso)
+            if mensagem.get("oferta"):
+                # O clique manda a pergunta completa pela caixa (assets/voz.js, como a voz e o leitor de EAN).
+                st.html(html_oferta(mensagem["oferta"]))
             # Com zero linhas não há tabela nem gráfico (nada de tabela vazia com "empty").
             if mensagem.get("colunas") and mensagem.get("linhas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
@@ -1389,7 +1450,7 @@ def montar_historico(mensagens):
     trocas = []
     for anterior, mensagem in zip(mensagens, mensagens[1:]):
         if (anterior["papel"] == "user" and mensagem["papel"] == "assistant" and mensagem.get("ok")
-                and (mensagem.get("sql") or mensagem.get("tipo") == "teorica")):
+                and (mensagem.get("sql") or mensagem.get("tipo") == "teorica" or mensagem.get("oferta"))):
             trocas.append({
                 "pergunta": anterior["texto"],
                 "resposta": " ".join(mensagem["texto"].split())[:CARACTERES_RESPOSTA],
@@ -1476,6 +1537,8 @@ nova = st.chat_input(
 )
 
 if nova:
+    # "sim" depois de "posso mostrar os preços coletados" vira a pergunta completa da oferta.
+    nova = pergunta_da_confirmacao(nova, st.session_state.mensagens)
     st.session_state.mensagens.append({"papel": "user", "texto": nova, "hora": agora()})
     st.session_state.pendente = nova
     st.rerun()  # redesenha já com a pergunta na tela e a caixa bloqueada
@@ -1492,21 +1555,24 @@ if st.session_state.pendente:
     finally:
         st.session_state.pendente = None
 
+    pergunta_atual = st.session_state.mensagens[-1]["texto"]
+    texto_resposta = padronizar_farmacias(texto_farmacias_sem_vendas(
+        texto_de_vendas(resultado["resposta"], resultado["colunas"], resultado["linhas"], resultado["sql"], pergunta_atual),
+        resultado, pergunta_atual, st.session_state.mensagens[:-1]))
     st.session_state.mensagens.append({
         "papel": "assistant",
-        "texto": padronizar_farmacias(texto_farmacias_sem_vendas(
-            texto_de_vendas(resultado["resposta"], resultado["colunas"], resultado["linhas"], resultado["sql"],
-                            st.session_state.mensagens[-1]["texto"]), resultado,
-            st.session_state.mensagens[-1]["texto"], st.session_state.mensagens[:-1])),
+        "texto": texto_resposta,
+        # "Para essa farmácia, posso mostrar os preços coletados": botão com a pergunta completa.
+        "oferta": oferta_de_precos(texto_resposta, pergunta_atual),
         "ok": resultado["ok"],
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
         "grafico": resultado.get("grafico"),  # sugestão de gráfico; a tela confere antes de desenhar
         # Confere aqui também, pela palavra "gráfico" na pergunta: sem ela, nada de gráfico.
-        "pediu_grafico": bool(PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
-        "pergunta": st.session_state.mensagens[-1]["texto"],  # a comparação usa a apresentação pedida
+        "pediu_grafico": bool(PEDIU_GRAFICO.search(pergunta_atual)),
+        "pergunta": pergunta_atual,  # a comparação usa a apresentação pedida
         "fala": texto_de_vendas(resultado.get("fala"), resultado["colunas"], resultado["linhas"], resultado["sql"],
-                                st.session_state.mensagens[-1]["texto"]),  # escrita para ser ouvida (redigir-resposta)
+                                pergunta_atual),  # escrita para ser ouvida (redigir-resposta)
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

@@ -230,6 +230,20 @@
   };
   estado.avisar = avisar;
 
+  // Botões de oferta da resposta ("Ver preços de dipirona na São João"): mandam a pergunta
+  // completa pelo mesmo caminho.
+  document.addEventListener("click", (evento) => {
+    const botao = evento.target.closest && evento.target.closest(".oferta-botao");
+    if (!botao) return;
+    evento.preventDefault();
+    const caixa = document.querySelector('[data-testid="stChatInputTextArea"]');
+    if (!caixa || caixa.disabled) {
+      avisar("Aguarde a resposta e tente de novo.");
+      return;
+    }
+    estado.perguntar(botao.dataset.pergunta);
+  });
+
   function marcarMic(ouvindo) {
     estado.ouvindo = ouvindo;
     document.querySelectorAll(".voz-mic").forEach((b) => {

@@ -391,6 +391,15 @@
 }
 .voz-ouvir:hover, .voz-ouvir.lendo { background: var(--cmp-n-fundo); }
 html:not(.voz-tts) .voz-ouvir { display: none; }
+/* Botão de oferta logo abaixo da resposta ("Ver preços de dipirona na São João"): o mesmo
+   estilo discreto do "Ouvir". */
+.oferta-botao {
+  padding: 3px 12px; border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 13px; line-height: 1.6;
+  color: var(--cmp-titulo); background: transparent; border: 1px solid var(--cmp-borda);
+}
+.oferta-botao:hover, .oferta-botao:focus-visible { background: var(--cmp-n-fundo); }
+.oferta-botao:focus-visible { outline: 2px solid var(--dourado); outline-offset: 2px; }
 
 /* Aviso curto (microfone bloqueado, não ouviu nada), acima da caixa de pergunta. */
 .voz-aviso {
