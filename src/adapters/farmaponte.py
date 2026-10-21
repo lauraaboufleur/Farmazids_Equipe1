@@ -5,6 +5,7 @@ import re
 import time
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
+from html import unescape
 
 import aiohttp
 
@@ -33,6 +34,9 @@ PADRAO_VIRGULA_SOBRANDO = re.compile(r",\s*}")
 PADRAO_TIPO_PRODUTO = re.compile(r'"@type"\s*:\s*"Product"')
 PADRAO_EAN = re.compile(r'"gtin13"\s*:\s*"(\d+)"')
 PADRAO_DISPONIBILIDADE = re.compile(r'"availability"\s*:\s*"([^"]+)"')
+# Marca escrita na página, no bloco do produto (link "title_marca" dentro de "box_title_marca").
+# Os cartões de outros produtos (recomendações) usam <p class="brand"> e ficam de fora.
+PADRAO_MARCA_VISIVEL = re.compile(r'box_title_marca".{0,400}?class="title_marca"[^>]*>\s*([^<]+?)\s*<', re.DOTALL)
 
 STATUS_PARA_REPETIR = (429, 500, 502, 503, 504)
 
@@ -82,6 +86,29 @@ def esta_em_estoque(dados_ld):
         return None                    # a página não informou
     return disponibilidade.endswith("InStock")
 
+def limpar_marca(valor):
+    """A marca como texto, ou None se vier vazia ou com "None"/"null" escrito (o JSON-LD faz isso)."""
+    if not isinstance(valor, str):
+        return None
+    valor = unescape(valor).strip()
+    return valor if valor and valor.lower() not in ("none", "null") else None
+
+
+def escolher_marca(edrone, dados_ld, html):
+    """Marca do produto, na ordem: dataItemEdrone (campo estruturado do site), JSON-LD e o
+    bloco de marca da página. Todas vêm do mesmo cadastro do site; quando ele não tem a
+    marca, as três vêm vazias. Nunca tira a marca do nome do produto (não inventa)."""
+    marca_ld = dados_ld.get("brand")
+    if isinstance(marca_ld, dict):
+        marca_ld = marca_ld.get("name")
+    visivel = PADRAO_MARCA_VISIVEL.search(html)
+    for candidata in (edrone.get("brand"), marca_ld, visivel.group(1) if visivel else None):
+        marca = limpar_marca(candidata)
+        if marca:
+            return marca
+    return None
+
+
 def ler_produto(conteudo, url):
     html = conteudo.decode("utf-8", errors="replace")
 
@@ -122,11 +149,7 @@ def ler_produto(conteudo, url):
         edrone, _ = json.JSONDecoder().raw_decode(trecho)
 
     # 4. Juntar tudo em um registro
-    marca = edrone.get("brand")
-    if not marca:
-        marca_ld = (dados_ld.get("brand") or {}).get("name")
-        if marca_ld and marca_ld != "None":
-            marca = marca_ld
+    marca = escolher_marca(edrone, dados_ld, html)
 
     return {
         "sku": produto.get("sku"),

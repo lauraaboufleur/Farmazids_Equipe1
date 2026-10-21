@@ -1,4 +1,6 @@
+import re
 import sys
+import unicodedata
 from datetime import datetime
 
 import pandas as pd
@@ -9,6 +11,15 @@ pd.set_option("display.max_colwidth", 60)
 
 CAMPOS_PRECO = ["preco_sem_desconto", "preco_cartao", "preco_pix"]
 LIMITE_DESCONTO_ALTO = 80
+# Farmácias em que a marca vazia é preenchida pelo nome do produto (ver marca_pelo_nome).
+FARMACIAS_MARCA_PELO_NOME = {"farmaponte"}
+# Só vale como marca pelo nome a que aparece em pelo menos tantos produtos do cadastro
+# (marca de um produto só costuma ser nome de linha, como "Prevent").
+MINIMO_PRODUTOS_MARCA = 3
+# Marcas do cadastro que não valem pelo nome (escritas sem acento, em minúsculas).
+MARCAS_IGNORADAS_PELO_NOME = {"prevent"}
+# Outros jeitos de escrever uma marca do cadastro no nome: grafia no nome -> marca do cadastro.
+MARCAS_EQUIVALENTES = {"ache biosintetica": "Biosintética - Aché"}
 
 
 def ler_raw(caminho):
@@ -43,6 +54,45 @@ def limpar_textos(df):
             .str.strip()
         )
     df["marca"] = df["marca"].replace({"None": pd.NA, "": pd.NA})
+    return df
+
+
+def sem_acento(texto):
+    """Minúsculas, sem acento e com pontuação virando espaço ("Prati-Donaduzzi" -> "prati donaduzzi")."""
+    texto = unicodedata.normalize("NFD", str(texto).lower())
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", texto).split())
+
+
+def marca_pelo_nome(df):
+    """Preenche a marca vazia quando o nome do produto contém, como palavra inteira, uma marca
+    que já aparece em pelo menos MINIMO_PRODUTOS_MARCA produtos do próprio cadastro da farmácia
+    (comparando sem acento e sem diferença de maiúsculas), ou uma grafia de MARCAS_EQUIVALENTES.
+    Se o nome casar com mais de uma marca, fica vazia; uma marca escrita dentro de outra que
+    também casou ("Aché" dentro de "Biosintética - Aché") conta como a maior. Nunca usa marca de fora."""
+    df = df.copy()
+    contagem = df["marca"].dropna().value_counts()
+    marcas = {}  # grafia sem acento -> marca como está no cadastro
+    for marca, produtos in contagem.items():
+        chave = sem_acento(marca)
+        if chave and produtos >= MINIMO_PRODUTOS_MARCA and chave not in MARCAS_IGNORADAS_PELO_NOME:
+            marcas.setdefault(chave, marca)
+    for grafia, marca in MARCAS_EQUIVALENTES.items():
+        if marca in contagem.index:
+            marcas[grafia] = marca
+    padroes = {chave: re.compile(rf"\b{re.escape(chave)}\b") for chave in marcas}
+
+    def achar(nome):
+        texto = sem_acento(nome)
+        casadas = [chave for chave, padrao in padroes.items() if padrao.search(texto)]
+        # "ache" dentro de "ache biosintetica": fica só a maior.
+        casadas = [c for c in casadas if not any(c != o and re.search(rf"\b{re.escape(c)}\b", o) for o in casadas)]
+        encontradas = {marcas[c] for c in casadas}
+        return encontradas.pop() if len(encontradas) == 1 else pd.NA
+
+    vazias = df["marca"].isna()
+    df.loc[vazias, "marca"] = df.loc[vazias, "nome"].map(achar)
+    print("Marcas preenchidas pelo nome:", (vazias & df["marca"].notna()).sum(), "de", vazias.sum(), "vazias")
     return df
 
 
@@ -111,6 +161,8 @@ def tratar(farmacia, data_arquivo):
     df = converter_tipos(df)
     df = calcular_descontos(df)
     df = limpar_textos(df)
+    if farmacia in FARMACIAS_MARCA_PELO_NOME:
+        df = marca_pelo_nome(df)
     df = validar_ean(df)
     df = verificar_precos(df)
     df = remover_duplicados(df)
