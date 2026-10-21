@@ -23,6 +23,10 @@ REGIAO = os.environ.get("AWS_REGION", "us-east-2")
 BANCO = os.environ.get("GLUE_DATABASE", "t1_eq1_farmazids")
 WORKGROUP = os.environ.get("ATHENA_WORKGROUP", "primary")
 PASTA_RESULTADOS = os.environ.get("DASHBOARD_ATHENA_OUTPUT", "s3://farmazids-t1-equipe1/athena-results/dashboard/")
+# O usuário das chaves do Streamlit (treinamento1-leitor-dados) não pode usar o Athena, e as
+# permissões dele não podem ser mudadas. Então o dashboard "veste" esta role, que confia nesse
+# usuário e tem as permissões do iam-policy-dashboard.json. Vazio = usa as chaves direto.
+ROLE_DASHBOARD = os.environ.get("DASHBOARD_ROLE_ARN", "arn:aws:iam::906513713169:role/t1-eq1-dashboard-leitura")
 
 SEM_ESTOQUE = 9999876  # "preço" que a São Paulo grava quando está fora de estoque
 FARMACIAS_COM_VENDAS = ["farmazids", "farmaponte", "veracruz"]  # a base de vendas só tem essas
@@ -88,14 +92,26 @@ NUMERICAS = {"unidades", "vendas", "ano", "dia_semana", "preco_sem_desconto", "p
              "preco_farmazids"}
 
 
+def clientes():
+    """Clientes do Athena e do S3, com as permissões da role do dashboard (credenciais
+    temporárias de 1 hora, pedidas de novo a cada carga)."""
+    import boto3  # só no modo real
+
+    if not ROLE_DASHBOARD:
+        return boto3.client("athena", region_name=REGIAO), boto3.client("s3", region_name=REGIAO)
+    chaves = boto3.client("sts", region_name=REGIAO).assume_role(
+        RoleArn=ROLE_DASHBOARD, RoleSessionName="dashboard-streamlit")["Credentials"]
+    sessao = boto3.Session(aws_access_key_id=chaves["AccessKeyId"], aws_secret_access_key=chaves["SecretAccessKey"],
+                           aws_session_token=chaves["SessionToken"], region_name=REGIAO)
+    return sessao.client("athena"), sessao.client("s3")
+
+
 def rodar(sql, athena=None, s3=None):
     """Roda uma consulta no Athena e devolve um DataFrame (tudo como texto, menos as colunas
     de NUMERICAS). Lê o CSV do resultado direto do S3: bem mais rápido que GetQueryResults
     de 1.000 em 1.000 linhas."""
-    import boto3  # só no modo real
-
-    athena = athena or boto3.client("athena", region_name=REGIAO)
-    s3 = s3 or boto3.client("s3", region_name=REGIAO)
+    if athena is None or s3 is None:
+        athena, s3 = clientes()
     id_consulta = athena.start_query_execution(
         QueryString=sql,
         QueryExecutionContext={"Database": BANCO},
@@ -122,10 +138,7 @@ def rodar(sql, athena=None, s3=None):
 
 def carregar_tudo():
     """As consultas da base, todas ao mesmo tempo (cada uma leva alguns segundos)."""
-    import boto3
-
-    athena = boto3.client("athena", region_name=REGIAO)
-    s3 = boto3.client("s3", region_name=REGIAO)
+    athena, s3 = clientes()
     with ThreadPoolExecutor(max_workers=len(CONSULTAS)) as executor:
         tarefas = {nome: executor.submit(rodar, sql, athena, s3) for nome, sql in CONSULTAS.items()}
         return {nome: tarefa.result() for nome, tarefa in tarefas.items()}
