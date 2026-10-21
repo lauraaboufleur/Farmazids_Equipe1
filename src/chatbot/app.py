@@ -25,6 +25,7 @@ import pandas as pd
 import streamlit as st
 
 from cliente_chatbot import MODO_SIMULADO, perguntar, sintetizar
+from dashboard import mostrar_dashboard
 
 ASSETS = Path(__file__).parent / "assets"
 LOGO = str(ASSETS / "logo_farmazids.png")                    # símbolo redondo
@@ -1522,6 +1523,24 @@ with st.container(key="cabecalho"):
             "<p class='aviso-simulado'>Modo simulado: respostas de teste, sem consultar a AWS.</p>",
             unsafe_allow_html=True,
         )
+
+# ---------- Chat ou Dashboard ----------
+# Bloqueado enquanto uma resposta está a caminho, como o botão do tema: trocar de
+# página redesenha a tela, e isso interromperia a resposta.
+pagina = st.segmented_control(
+    "Página", ["Chat", "Dashboard"], default="Chat", key="pagina", label_visibility="collapsed",
+    disabled=st.session_state.pendente is not None,
+) or "Chat"  # clicar de novo na opção marcada desmarca: aí volta para o chat
+if pagina == "Dashboard":
+    mostrar_dashboard({
+        "escuro": modo_escuro(),
+        "cores": CORES_GRAFICO["escuro" if modo_escuro() else "claro"],
+        "idioma": IDIOMA_GRAFICO,
+        "nomes_farmacias": NOMES_FARMACIAS,
+        "celulas_escuras": CELULAS_ESCURAS,
+        "simulado": MODO_SIMULADO,
+    })
+    st.stop()  # no dashboard não aparecem a conversa nem a caixa de pergunta
 
 # ---------- Conversa ----------
 # Redesenha a conversa inteira a cada interação (é assim que o Streamlit funciona).
