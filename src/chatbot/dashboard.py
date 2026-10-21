@@ -597,6 +597,8 @@ def mostrar_dashboard(visual):
             print(f"[dashboard] erro ao carregar: {erro!r}")
             st.error("Não consegui carregar os dados do dashboard. Confira se as credenciais da AWS têm "
                      "permissão no Athena, no Glue e no bucket (iam-policy-dashboard.json) e tente de novo.")
+            # O motivo exato (ex.: qual permissão falta). As mensagens da AWS não trazem as chaves.
+            st.caption(f"Detalhe: {type(erro).__name__}: {erro}")
             if st.button("Tentar de novo", key="dash-tentar"):
                 _dados.clear()
                 st.rerun()
