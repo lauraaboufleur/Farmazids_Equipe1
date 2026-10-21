@@ -41,7 +41,9 @@ DICAS_DADOS = (
     "(preco_sem_desconto, preco_cartao, preco_pix, em_estoque), um registro por produto e coleta. "
     "data_coleta é um timestamp (ex.: 2026-10-11 15:47:43); para 'preço atual', use a coleta mais recente "
     "de cada farmácia e produto. categorias é um array: use contains(categorias, '...') ou UNNEST.\n"
-    "- vw_vendas: vendas da Farmazids (uma linha por venda, com quantidade_vendida e data_venda).\n"
+    "- vw_vendas: vendas (uma linha por venda) com só estas colunas: id_venda, farmacia, ean_gtin (código "
+    "de barras do produto vendido), data_venda e quantidade_vendida. Não tem preço, valor, nome do produto "
+    "nem SKU: o produto e o preço vêm do código de barras (ver a regra de vendas).\n"
     "- vw_medicamentos: catálogo da Farmazids com o preço próprio (preco_farmazids).\n"
     "- vw_precos_unitarios: as mesmas linhas da vw_precos_concorrentes, mais o que foi lido do nome do "
     "produto: quantidade (da embalagem), unidade ('comprimido', 'capsula', 'ml', 'g', 'dose', 'sache'...), "
@@ -118,14 +120,70 @@ REGRA_COMPARACAO = (
     "TRIM(CAST(u.ean AS varchar)) = '7891234567895' na vw_precos_unitarios e TRIM(CAST(ean AS varchar)) = "
     "'7891234567895' na vw_precos_unitarios_farmazids. Esse número é o código, não a concentração: não "
     "filtre concentração nem nome.\n"
-    "- Perguntas que não são de preço (lista de produtos, estoque, vendas, catálogo) continuam com as "
-    "views de sempre.\n"
+    "- Perguntas que não são de preço (lista de produtos, estoque, catálogo) continuam com as views de "
+    "sempre. Perguntas de vendas seguem a regra de vendas.\n"
+)
+
+# Vendas: a base não tem preço nem nome; os dois vêm do código de barras (ean_gtin).
+REGRA_VENDAS = (
+    "- Vendas (quantidade vendida, vendas por mês ou farmácia, valor, faturamento): use o modelo abaixo. "
+    "O produto e o preço vêm do código de barras, nesta ordem: a coleta mais recente da mesma farmácia; "
+    "senão, a mediana da coleta mais recente das outras farmácias; senão, a vw_medicamentos (Farmazids). "
+    "Compare os códigos sem zeros à esquerda. O preço é o de comparação (preco_comparacao: Pix; se vazio, "
+    "cartão). Traga SEMPRE total_vendas, vendas_com_preco, vendas_sem_preco e valor_estimado (soma de "
+    "quantidade x preço, só das vendas com preço), com estes nomes. Nunca chame o valor de 'arrecadado' "
+    "nem os produtos de 'SKU'. Com filtro de remédio (ex.: 'dipirona', como no exemplo), as vendas com "
+    "código sem cadastro (nome IS NULL) ficam FORA de total_vendas e do valor, porque não são comprovadamente "
+    "do remédio; elas vêm à parte, na coluna vendas_codigo_sem_cadastro (todas as vendas da farmácia e do "
+    "mês com código sem cadastro). Troque os filtros do exemplo pelos da pergunta (farmácia, período, "
+    "agrupamento):\n"
+    "WITH vendas AS (SELECT id_venda, farmacia, "
+    "regexp_replace(regexp_replace(translate(lower(trim(farmacia)), 'áàâãéêíóôõúç', 'aaaaeeiooouc'), "
+    "'[^a-z]', ''), '^drogaria', '') AS farmacia_n, "
+    "regexp_replace(trim(CAST(ean_gtin AS varchar)), '^0+', '') AS ean, "
+    "TRY_CAST(quantidade_vendida AS double) AS quantidade, date(data_venda) AS data_venda "
+    "FROM vw_vendas WHERE date(data_venda) BETWEEN DATE '2026-01-01' AND DATE '2026-01-31' "
+    "AND LOWER(farmacia) = 'farmaponte'), "
+    "coleta AS (SELECT regexp_replace(regexp_replace(translate(lower(trim(farmacia)), 'áàâãéêíóôõúç', "
+    "'aaaaeeiooouc'), '[^a-z]', ''), '^drogaria', '') AS farmacia_n, "
+    "regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean, max_by(nome, data_coleta) AS nome, "
+    "max_by(preco_comparacao, data_coleta) AS preco FROM vw_precos_unitarios "
+    "WHERE ean IS NOT NULL AND preco_comparacao IS NOT NULL GROUP BY 1, 2), "
+    "outras AS (SELECT ean, min(nome) AS nome, approx_percentile(preco, 0.5) AS preco FROM coleta GROUP BY ean), "
+    "farmazids AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean, min(nome) AS nome, "
+    "min(TRY_CAST(preco_farmazids AS double)) AS preco FROM vw_medicamentos WHERE ean IS NOT NULL GROUP BY 1), "
+    "identificadas AS (SELECT v.*, "
+    "CASE WHEN c.preco IS NOT NULL THEN c.nome WHEN o.preco IS NOT NULL THEN o.nome ELSE f.nome END AS nome, "
+    "COALESCE(c.preco, o.preco, f.preco) AS preco FROM vendas v "
+    "LEFT JOIN coleta c ON c.farmacia_n = v.farmacia_n AND c.ean = v.ean "
+    "LEFT JOIN outras o ON o.ean = v.ean LEFT JOIN farmazids f ON f.ean = v.ean) "
+    "SELECT farmacia, date_format(data_venda, '%Y-%m') AS mes, "
+    "count_if(LOWER(nome) LIKE '%dipirona%') AS total_vendas, "
+    "count_if(LOWER(nome) LIKE '%dipirona%' AND preco IS NOT NULL) AS vendas_com_preco, "
+    "count_if(LOWER(nome) LIKE '%dipirona%' AND preco IS NULL) AS vendas_sem_preco, "
+    "sum(CASE WHEN LOWER(nome) LIKE '%dipirona%' THEN quantidade END) AS unidades, "
+    "round(sum(CASE WHEN LOWER(nome) LIKE '%dipirona%' THEN quantidade * preco END), 2) AS valor_estimado, "
+    "count_if(nome IS NULL) AS vendas_codigo_sem_cadastro "
+    "FROM identificadas GROUP BY 1, 2 "
+    "HAVING count_if(LOWER(nome) LIKE '%dipirona%') > 0 OR count_if(nome IS NULL) > 0 "
+    "ORDER BY 1, 2 LIMIT 50\n"
+    "- Sem filtro de remédio (vendas totais), as vendas com código sem cadastro entram no total: "
+    "count(*) AS total_vendas, count_if(preco IS NOT NULL) AS vendas_com_preco, count_if(preco IS NULL) AS "
+    "vendas_sem_preco, sum(quantidade) AS unidades, round(sum(quantidade * preco), 2) AS valor_estimado, "
+    "sem HAVING e sem a coluna vendas_codigo_sem_cadastro. Para listar produtos vendidos, agrupe por nome e "
+    "traga o código como ean_gtin (o nome fica vazio quando o código não tem cadastro).\n"
 )
 
 # Palavras de pergunta de preço, já sem acento e em minúsculas (ver eh_pergunta_de_preco).
 PERGUNTA_DE_PRECO = re.compile(
     r"\b(preco|precos|custa|custam|custo|barat\w*|car[oa]s?|compar\w*|compensa|valor|valores"
     r"|onde (comprar|compro|encontr\w*|acho|achar|vende\w*))\b"
+)
+# Vendas seguem a regra de vendas, não o modelo de comparação ("valor" das vendas não é preço).
+PERGUNTA_DE_VENDAS = re.compile(r"\b(vend\w*|faturamento|faturou|faturad\w*|arrecad\w*|receita)\b")
+LEMBRETE_VENDAS = (
+    "\n\n(Lembrete: é uma pergunta de vendas. Siga a regra de vendas: preço pelo código de barras, "
+    "sempre com total_vendas, vendas_com_preco, vendas_sem_preco e valor_estimado.)"
 )
 # Evolução ao longo do tempo segue a regra de evolução, não o modelo de comparação.
 PERGUNTA_DE_EVOLUCAO = re.compile(
@@ -182,6 +240,7 @@ def system_prompt():
         "os produtos encontrados em cada coleta, e min_by(preco_comparacao_origem, preco_comparacao) AS "
         "origem_preco.\n"
         f"{REGRA_COMPARACAO}"
+        f"{REGRA_VENDAS}"
         "- Responda APENAS com o SQL, sem explicações e sem blocos de código.\n"
         "- Se vier uma conversa anterior e a pergunta atual for uma continuação (ex.: 'e na São João?', "
         "'e o mais barato?'), reaproveite produto, filtros e colunas do SQL anterior e mude só o que a "
@@ -225,7 +284,12 @@ def eh_pergunta_de_preco(pergunta):
     """Pergunta de preço de remédio que não é de evolução. O lembrete vai junto da pergunta,
     para o modelo não voltar à vw_precos_concorrentes (com ou sem acento e pontuação)."""
     texto = sem_acento(pergunta)
-    return bool(PERGUNTA_DE_PRECO.search(texto)) and not PERGUNTA_DE_EVOLUCAO.search(texto)
+    return (bool(PERGUNTA_DE_PRECO.search(texto)) and not PERGUNTA_DE_EVOLUCAO.search(texto)
+            and not eh_pergunta_de_vendas(pergunta))
+
+
+def eh_pergunta_de_vendas(pergunta):
+    return bool(PERGUNTA_DE_VENDAS.search(sem_acento(pergunta)))
 
 
 def lambda_handler(event, context):
@@ -234,7 +298,9 @@ def lambda_handler(event, context):
     historico = event.get("historico") or []
 
     mensagem = texto_historico(historico) + pergunta
-    if eh_pergunta_de_preco(pergunta):
+    if eh_pergunta_de_vendas(pergunta):
+        mensagem += LEMBRETE_VENDAS
+    elif eh_pergunta_de_preco(pergunta):
         mensagem += LEMBRETE_PRECO
     ean = EAN_NA_PERGUNTA.search(pergunta)
     if ean:

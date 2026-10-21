@@ -41,6 +41,10 @@
   --ean-borda: #E3D3B0;
   --ean-texto: var(--roxo);
   --ean-erro: #B5533C;
+  /* Aviso de valor parcial nas vendas */
+  --aviso-vendas-fundo: #FDF3E1;
+  --aviso-vendas-borda: #C2A05A;
+  --aviso-vendas-texto: #7A5418;
   /* Comparação por unidade (cartões) */
   --cmp-frase: #2E1F3E;
   --cmp-negrito: #351A4D;
@@ -506,3 +510,11 @@ html.ean-aberto, html.ean-aberto body { overflow: hidden; }
   .ean-guia { left: 8%; right: 8%; top: 36%; bottom: 36%; }
   .ean-botao { width: 40px; height: 40px; }
 }
+
+/* ---------- Vendas: aviso de valor parcial (vendas sem produto identificado) ---------- */
+.aviso-vendas {
+  margin: 0.2rem 0 0.4rem; padding: 8px 12px; border-radius: 10px;
+  background: var(--aviso-vendas-fundo); color: var(--aviso-vendas-texto);
+  border-left: 4px solid var(--aviso-vendas-borda); font-size: 0.95rem; line-height: 1.45;
+}
+.aviso-vendas div + div { margin-top: 6px; }

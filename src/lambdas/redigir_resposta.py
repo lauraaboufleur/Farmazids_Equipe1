@@ -56,7 +56,16 @@ SYSTEM = (
     "número de farmácias, ou na que a pergunta pediu, com o preço por unidade. Exemplo: 'O paracetamol "
     "750 mg sai mais barato na FarmaPonte, a R$ 0,34 por comprimido.' Ignore os remédios combinados "
     "(concentração com '+', ex.: '500mg+30mg'), a menos que a pergunta cite a combinação. Preço por "
-    "unidade com 2 casas decimais. Nada além dessa frase.\n\n"
+    "unidade com 2 casas decimais. Nada além dessa frase.\n"
+    "Vendas: se o resultado tiver valor_estimado, chame esse valor de 'valor estimado (preços atuais)', "
+    "nunca de 'arrecadado' nem 'faturado', e inclua uma frase curta dizendo que ele é estimado com os "
+    "preços atuais, porque a base de vendas não tem o preço de cada venda. Se vendas_sem_preco for maior "
+    "que zero, diga quantas das total_vendas ficaram sem produto identificado (código de barras sem "
+    "cadastro) e fora do valor. Se vier a coluna vendas_codigo_sem_cadastro (a pergunta filtrou um "
+    "remédio), essas vendas NÃO entram no total nem no valor; para cada farmácia e mês com o número maior "
+    "que zero, diga: 'Além disso, X vendas de [farmácia] em [mês] têm código de barras sem cadastro; não é "
+    "possível saber se alguma é de [remédio].' Nunca use a palavra SKU: diga produto ou código de "
+    "barras.\n\n"
     "Entregue sempre pela ferramenta responder."
 )
 

@@ -32,7 +32,7 @@ TITULO_ESCURO = str(ASSETS / "titulo_farmazids_escuro.png")  # mesmo letreiro co
 FUSO = ZoneInfo("America/Sao_Paulo")
 
 # Colunas que parecem número, mas são códigos (não podem perder zeros à esquerda).
-COLUNAS_TEXTO = {"ean", "sku", "id_venda"}
+COLUNAS_TEXTO = {"ean", "ean_gtin", "sku", "id_venda"}
 
 # Nomes das colunas na tabela. O que não estiver aqui vira "Nome com espaços".
 NOMES_COLUNAS = {
@@ -50,6 +50,18 @@ NOMES_COLUNAS = {
     "menor_preco_pix": "Menor preço Pix",
     "menor_preco_cartao": "Menor preço cartão",
     "preco_comparacao": "Preço",
+    # Vendas (vw_vendas): o valor é estimado com os preços atuais, nunca "arrecadado".
+    "total_vendas": "Vendas",
+    "vendas_com_preco": "Com preço",
+    "vendas_sem_preco": "Sem produto identificado",
+    "vendas_codigo_sem_cadastro": "Código sem cadastro (fora do total)",
+    "valor_estimado": "Valor estimado (preços atuais)",
+    "ean_gtin": "Código de barras",
+    "unidades": "Unidades",
+    "quantidade_vendida": "Quantidade vendida",
+    "data_venda": "Data da venda",
+    "id_venda": "Venda",
+    "mes": "Mês",
     "origem_preco": "Pagamento",
     "preco_comparacao_origem": "Pagamento",
     "maior_preco": "Maior preço",
@@ -384,7 +396,7 @@ def montar_tabela(colunas, linhas):
             continue
         if PRECO_POR_UNIDADE.match(chave):
             funcao = em_reais_unidade
-        elif "preco" in chave or "valor" in chave:
+        elif em_dinheiro(chave):
             funcao = em_reais
         elif (convertida.dropna() % 1 == 0).all():
             funcao = inteiro_br
@@ -420,8 +432,13 @@ def montar_tabela(colunas, linhas):
 
 
 # ---------- Gráfico ----------
+# Contagens com "preco" no nome (vendas_com_preco...): são quantidades, não dinheiro.
+CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades"}
+
+
 def em_dinheiro(coluna):
-    return "preco" in coluna.lower() or "valor" in coluna.lower()
+    coluna = coluna.lower()
+    return coluna not in CONTAGENS and ("preco" in coluna or "valor" in coluna)
 
 
 def rotulo_menor(rotulo):
@@ -860,6 +877,89 @@ def limpar_texto(texto):
     return texto.replace("$", "\\$")
 
 
+# ---------- Vendas ----------
+# A base de vendas (vw_vendas) não tem preço: a gerar-sql acha o preço pelo código de barras
+# e devolve total_vendas, vendas_com_preco, vendas_sem_preco e valor_estimado.
+FRASE_ESTIMADO = "O valor é estimado com os preços atuais, porque a base de vendas não tem o preço de cada venda."
+
+
+def eh_resultado_de_vendas(colunas):
+    minusculas = {c.lower() for c in colunas or []}
+    return {"total_vendas", "vendas_sem_preco"} <= minusculas
+
+
+def texto_de_vendas(texto, colunas):
+    """Nas respostas de vendas, garante o que o Bedrock pode esquecer: nunca "arrecadado" nem
+    "SKU", e a frase de que o valor é estimado com os preços atuais."""
+    if not texto or not eh_resultado_de_vendas(colunas):
+        return texto
+    texto = re.sub(r"\bvalor(es)? arrecadad[oa]s?\b", "valor estimado (preços atuais)", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\barrecadad([oa]s?)\b", r"estimad\1", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\bSKUs\b", "códigos de barras", texto, flags=re.IGNORECASE)
+    texto = re.sub(r"\bSKU\b", "código de barras", texto, flags=re.IGNORECASE)
+    # A explicação (não só a palavra "estimado", que a troca acima pode ter posto).
+    if "preço de cada venda" not in texto.lower():
+        texto = texto.rstrip() + "\n\n" + FRASE_ESTIMADO
+    return texto
+
+
+MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro",
+         "outubro", "novembro", "dezembro"]
+
+
+def mes_br(valor):
+    """"2026-01" (ou "2026-01-01") -> "janeiro de 2026"; o que não for mês fica como veio."""
+    achado = re.match(r"(\d{4})-(\d{2})", str(valor or ""))
+    if not achado or not 1 <= int(achado.group(2)) <= 12:
+        return str(valor or VAZIO)
+    return f"{MESES[int(achado.group(2)) - 1]} de {achado.group(1)}"
+
+
+def inteiro_texto(n):
+    return f"{n:,.0f}".replace(",", ".")
+
+
+def html_aviso_vendas(mensagem):
+    """Avisos das vendas (a base não tem preço; o produto vem do código de barras):
+    - sem filtro de remédio: "⚠ Valor parcial: X de Y vendas sem produto identificado...";
+    - com filtro de remédio (coluna vendas_codigo_sem_cadastro): as vendas com código sem cadastro
+      ficam fora do total, e cada farmácia e mês com alguma ganha "⚠ Além disso, X vendas de ... em
+      ... têm código de barras sem cadastro; não é possível saber se alguma é de [remédio]."."""
+    colunas = [c.lower() for c in mensagem.get("colunas") or []]
+    if not eh_resultado_de_vendas(colunas):
+        return ""
+    linhas = mensagem.get("linhas") or []
+
+    def valor(linha, coluna):
+        i = colunas.index(coluna) if coluna in colunas else None
+        return limpo(linha[i]) if i is not None and i < len(linha) else None
+
+    avisos = []
+    total = sum(numero(valor(l, "total_vendas")) or 0 for l in linhas)
+    sem = sum(numero(valor(l, "vendas_sem_preco")) or 0 for l in linhas)
+    if sem:
+        avisos.append(f"⚠ Valor parcial: {inteiro_texto(sem)} de {inteiro_texto(total)} vendas sem produto "
+                      "identificado (código de barras sem cadastro).")
+    if "vendas_codigo_sem_cadastro" in colunas:
+        achado = REMEDIO_NO_SQL.search(mensagem.get("sql") or "")
+        remedio = achado.group(1).strip().lower() if achado else "este remédio"
+        for linha in linhas:
+            n = numero(valor(linha, "vendas_codigo_sem_cadastro")) or 0
+            if not n:
+                continue
+            farmacia = valor(linha, "farmacia") or ""
+            nome = NOMES_FARMACIAS.get(farmacia.lower(), farmacia) or "a farmácia"
+            mes = valor(linha, "mes")
+            quando = f" em {mes_br(mes)}" if mes else ""
+            vendas, tem = ("venda", "tem") if n == 1 else ("vendas", "têm")
+            avisos.append(f"⚠ Além disso, {inteiro_texto(n)} {vendas} de {nome}{quando} {tem} código de barras "
+                          f"sem cadastro; não é possível saber se alguma é de {remedio}.")
+    if not avisos:
+        return ""
+    return ("<div class='aviso-vendas' role='status'>"
+            + "".join(f"<div>{html.escape(a)}</div>" for a in avisos) + "</div>")
+
+
 def reais_falados(achado):
     """"R$ 0,34" -> "34 centavos"; "R$ 12,50" -> "12 reais e 50 centavos"; "R$ 1,00" -> "1 real"."""
     reais = int(achado.group(1).replace(".", ""))
@@ -1112,6 +1212,9 @@ def mostrar(mensagem, chave):
                 st.html(html_frase(mensagem["texto"]) + html_comparacao(comparacao))
             else:
                 st.markdown(limpar_texto(mensagem["texto"]))
+            aviso = html_aviso_vendas(mensagem) if papel == "assistant" else ""
+            if aviso:
+                st.html(aviso)
             if mensagem.get("colunas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
                 if comparacao:
@@ -1261,7 +1364,7 @@ if st.session_state.pendente:
 
     st.session_state.mensagens.append({
         "papel": "assistant",
-        "texto": resultado["resposta"],
+        "texto": texto_de_vendas(resultado["resposta"], resultado["colunas"]),
         "ok": resultado["ok"],
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
@@ -1269,7 +1372,7 @@ if st.session_state.pendente:
         # Confere aqui também, pela palavra "gráfico" na pergunta: sem ela, nada de gráfico.
         "pediu_grafico": bool(PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
         "pergunta": st.session_state.mensagens[-1]["texto"],  # a comparação usa a apresentação pedida
-        "fala": resultado.get("fala"),  # a resposta escrita para ser ouvida (redigir-resposta)
+        "fala": texto_de_vendas(resultado.get("fala"), resultado["colunas"]),  # escrita para ser ouvida (redigir-resposta)
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

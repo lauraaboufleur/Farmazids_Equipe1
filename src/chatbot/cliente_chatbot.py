@@ -123,6 +123,54 @@ def _perguntar_simulado(pergunta, historico):
     time.sleep(1.5)  # imita o tempo de resposta do backend
     contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
     pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
+    if any(p in pergunta.lower() for p in ("vend", "fatur", "arrecad")):
+        # Para testar as vendas (a base não tem preço; o produto vem do código de barras).
+        # Com "dipirona" na pergunta (filtro de remédio): o total conta só a dipirona identificada, e as
+        # vendas com código sem cadastro vêm à parte (o caso do cliente: FarmaPonte em janeiro, 1 venda
+        # de dipirona e 12 com código sem cadastro). Sem remédio: vendas totais, com elas no total.
+        # Com "arrecadado" na pergunta, o texto vem do jeito errado, para testar a correção da tela.
+        meses = ["2026-01", "2026-02", "2026-03"]
+        filtrou = "dipirona" in pergunta.lower()
+        if filtrou:
+            # (vendas de dipirona, com preço, unidades, valor, vendas da farmácia no mês com código sem cadastro)
+            dados = {"FarmaPonte": [(1, 1, 2, 20.0, 12), (7, 7, 9, 48.3, 2), (11, 11, 12, 61.9, 0)],
+                     "São João": [(8, 8, 9, 39.6, 0), (9, 9, 10, 44.1, 1), (7, 7, 8, 35.2, 0)]}
+            colunas = ["farmacia", "mes", "total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades",
+                       "valor_estimado", "vendas_codigo_sem_cadastro"]
+            linhas = [[f, m, str(t), str(c), str(t - c), str(u), str(v), str(x)]
+                      for f, lista in dados.items() for m, (t, c, u, v, x) in zip(meses, lista)]
+            resposta = (f"Em janeiro, a FarmaPonte teve 1 venda de dipirona identificada, com valor estimado de "
+                        f"R$ 20,00 (preços atuais){contexto}. Além disso, 12 vendas da FarmaPonte em janeiro de "
+                        "2026 têm código de barras sem cadastro; não é possível saber se alguma é de dipirona. "
+                        "O valor é estimado com os preços atuais, porque a base de vendas não tem o preço de "
+                        "cada venda.")
+            sql = ("WITH vendas AS (...) ... SELECT farmacia, ..., count_if(LOWER(nome) LIKE '%dipirona%') AS "
+                   "total_vendas, ..., count_if(nome IS NULL) AS vendas_codigo_sem_cadastro FROM identificadas "
+                   "GROUP BY 1, 2 ... LIMIT 50")
+        else:
+            dados = {"FarmaPonte": [(140, 128, 160, 2210.5), (131, 129, 150, 2045.9), (152, 152, 170, 2388.0)],
+                     "São João": [(98, 97, 110, 1530.2), (102, 101, 115, 1610.8), (95, 95, 104, 1499.3)]}
+            colunas = ["farmacia", "mes", "total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades",
+                       "valor_estimado"]
+            linhas = [[f, m, str(t), str(c), str(t - c), str(u), str(v)]
+                      for f, lista in dados.items() for m, (t, c, u, v) in zip(meses, lista)]
+            resposta = (f"Em janeiro, a FarmaPonte teve 140 vendas, com valor estimado de R$ 2.210,50 (preços "
+                        f"atuais); 12 delas ficaram sem produto identificado e fora do valor{contexto}. O valor "
+                        "é estimado com os preços atuais, porque a base de vendas não tem o preço de cada venda.")
+            sql = "WITH vendas AS (...) ... SELECT farmacia, ..., count(*) AS total_vendas, ... LIMIT 50"
+        if "arrecad" in pergunta.lower():
+            resposta = (f"Em janeiro, a FarmaPonte teve 13 vendas e o valor arrecadado foi de R$ 20,00. Das 13, "
+                        f"12 tinham SKU sem cadastro{contexto}.")
+        return {
+            "ok": True,
+            "resposta": resposta,
+            "sql": sql,
+            "colunas": colunas,
+            "linhas": linhas,
+            "tipo": "dados",
+            "grafico": {"tipo": "barras", "x": "mes", "y": ["valor_estimado"], "serie": "farmacia",
+                        "pedido": True} if pediu_grafico else None,
+        }
     if "compar" in pergunta.lower() or "barat" in pergunta.lower():
         # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql:
         # paracetamol em 3 apresentações + 1 combinação, a Farmazids fora do top 3, um produto
