@@ -49,6 +49,9 @@ NOMES_COLUNAS = {
     "menor_preco": "Menor preço",
     "menor_preco_pix": "Menor preço Pix",
     "menor_preco_cartao": "Menor preço cartão",
+    "preco_comparacao": "Preço",
+    "origem_preco": "Pagamento",
+    "preco_comparacao_origem": "Pagamento",
     "maior_preco": "Maior preço",
     "em_estoque": "Estoque",
     "data_coleta": "Coleta",
@@ -62,8 +65,11 @@ NOMES_COLUNAS = {
 
 # Preço por unidade (vw_precos_unitarios): o cabeçalho diz a unidade ("Por comprimido",
 # "Pix por ml"...) quando todas as linhas têm a mesma; senão, "Por unidade".
-PRECO_POR_UNIDADE = re.compile(r"^(?:menor_)?preco(?:_(pix|cartao|farmazids))?_por_unidade$")
+PRECO_POR_UNIDADE = re.compile(r"^(?:menor_)?preco(?:_(pix|cartao|farmazids|comparacao))?_por_unidade$")
 TIPOS_PRECO = {"pix": "Pix por", "cartao": "Cartão por", "farmazids": "Farmazids por"}
+# De onde veio o preço de comparação (vw_precos_unitarios): o Pix; se vazio, o cartão.
+COLUNAS_ORIGEM_PRECO = ("origem_preco", "preco_comparacao_origem")
+NOMES_ORIGEM_PRECO = {"pix": "Pix", "cartao": "Cartão"}
 
 # Unidade e forma vêm sem acento das views; na tabela aparecem escritas direito.
 NOMES_UNIDADES_FORMAS = {
@@ -354,6 +360,10 @@ def montar_tabela(colunas, linhas):
             tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_FARMACIAS.get(str(v).lower(), v))
             continue
 
+        if chave in COLUNAS_ORIGEM_PRECO:
+            tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_ORIGEM_PRECO.get(str(v).lower(), v))
+            continue
+
         if chave in ("unidade", "forma"):
             tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_UNIDADES_FORMAS.get(str(v).lower(), v))
             continue
@@ -419,6 +429,16 @@ def rotulo_menor(rotulo):
     return rotulo if rotulo.lower().startswith("menor") else f"Menor {rotulo[0].lower()}{rotulo[1:]}"
 
 
+def farmacias_no_cartao(tabela):
+    """Farmácias cujo preço no resultado é o do cartão (coluna de origem do preço de comparação)."""
+    origem = next((c for c in tabela.columns if c.lower() in COLUNAS_ORIGEM_PRECO), None)
+    farmacia = next((c for c in tabela.columns if c.lower() == "farmacia"), None)
+    if not origem or not farmacia:
+        return set()
+    cartao = tabela[origem].astype(str).str.lower() == "cartao"
+    return set(tabela.loc[cartao, farmacia].astype(str).str.lower())
+
+
 def dados_do_grafico(sugestao, colunas, linhas):
     """Confere a sugestão de gráfico e monta os pontos (uma linha por ponto:
     x, série, valor e produto). Devolve (pontos, menor) ou None se algo não
@@ -437,13 +457,20 @@ def dados_do_grafico(sugestao, colunas, linhas):
     produto = next((c for c in colunas if c.lower() in COLUNAS_PRODUTO and c not in (x, serie)), None)
 
     tabela = pd.DataFrame(linhas, columns=colunas).astype(object).map(lambda v: None if vazio(v) else v)
+    no_cartao = farmacias_no_cartao(tabela)
+
+    def nome_farmacia(v):
+        # "São João (cartão)": o preço dela é o do cartão (ela não informa Pix).
+        nome = NOMES_FARMACIAS.get(str(v).lower(), str(v))
+        return f"{nome} (cartão)" if str(v).lower() in no_cartao else nome
+
     if sugestao["tipo"] == "linha":
         # "mixed": aceita data sozinha e data com hora na mesma coluna.
         eixo_x = pd.to_datetime(tabela[x], errors="coerce", format="mixed")
         if eixo_x.isna().any():
             return None
     elif x.lower() == "farmacia":
-        eixo_x = tabela[x].map(lambda v: NOMES_FARMACIAS.get(str(v).lower(), v))
+        eixo_x = tabela[x].map(nome_farmacia)
     else:
         eixo_x = tabela[x].astype(str)
 
@@ -453,7 +480,8 @@ def dados_do_grafico(sugestao, colunas, linhas):
         if valores.notna().sum() != tabela[y].notna().sum():
             return None  # tem texto no meio dos valores
         if serie:
-            nomes_series = tabela[serie].map(lambda v: NOMES_FARMACIAS.get(str(v).lower(), str(v)))
+            nomes_series = tabela[serie].map(nome_farmacia if serie.lower() == "farmacia"
+                                             else lambda v: NOMES_FARMACIAS.get(str(v).lower(), str(v)))
         else:
             nomes_series = pd.Series(nome_coluna(y), index=tabela.index)
         pontos.append(pd.DataFrame({"x": eixo_x, "serie": nomes_series, "valor": valores,
@@ -613,13 +641,16 @@ def ler_comparacao(mensagem):
     unitarias = [c for c in minusculas if PRECO_POR_UNIDADE.match(c)]
     if "farmacia" not in minusculas or not unitarias:
         return None
-    # Preço por unidade principal: o geral, senão o Pix, senão o primeiro que vier.
-    ppu = next((c for c in ("preco_por_unidade", "preco_pix_por_unidade") if c in unitarias), unitarias[0])
+    # Preço por unidade principal: o geral, senão o de comparação (Pix; se vazio, cartão), senão o
+    # Pix, senão o primeiro que vier.
+    ppu = next((c for c in ("preco_por_unidade", "preco_comparacao_por_unidade", "preco_pix_por_unidade")
+                if c in unitarias), unitarias[0])
     caixa = ppu.replace("menor_", "").replace("_por_unidade", "")
     opcoes = {
         "farmacia": ["farmacia"], "produto": ["produto", "nome", "nome_produto"], "marca": ["marca", "fabricante"],
         "ppu": [ppu], "caixa": [caixa, "preco", "preco_pix"], "quantidade": ["quantidade"],
         "unidade": ["unidade"], "concentracao": ["concentracao"], "forma": ["forma"], "coleta": ["data_coleta", "dt"],
+        "origem": list(COLUNAS_ORIGEM_PRECO),
     }
     indice = {campo: next((minusculas.index(o) for o in nomes if o in minusculas), None)
               for campo, nomes in opcoes.items()}
@@ -644,6 +675,8 @@ def ler_comparacao(mensagem):
             "concentracao": valor(linha, "concentracao"),
             "forma": (valor(linha, "forma") or "").lower() or None,
             "coleta": valor(linha, "coleta"),
+            # Preço do cartão (a farmácia não informa Pix): a tela marca "(cartão)".
+            "no_cartao": (valor(linha, "origem") or "").lower() == "cartao",
         })
     com_preco = [x for x in itens if x["ppu"] is not None and x["ppu"] > 0]
     if not com_preco:
@@ -744,6 +777,13 @@ def html_frase(texto):
     return f"<p class='cmp-frase'>{frase}</p>"
 
 
+def html_cartao(item):
+    """Marquinha "(cartão)" ao lado do preço, quando ele não é o do Pix."""
+    if not item.get("no_cartao"):
+        return ""
+    return "<span class='cmp-pagamento' title='Preço no cartão: esta farmácia não informa o preço Pix'>(cartão)</span>"
+
+
 def html_linha(posicao, x, melhor):
     detalhes = [x["marca"], embalagem_curta(x), reais_juntos(x["caixa"]) if x["caixa"] is not None else None]
     detalhes = " · ".join(html.escape(d) for d in detalhes if d)
@@ -757,7 +797,7 @@ def html_linha(posicao, x, melhor):
         f"<div class='{classe}'{dica}><span class='{circulo}'>{posicao}</span>"
         f"<span class='cmp-farmacia'>{html.escape(x['nome_farmacia'])}</span>"
         f"<span class='cmp-detalhes'>{detalhes}</span>"
-        f"<span class='cmp-preco'><b>{reais_juntos(x['ppu'], unidade=True)}</b>{diferenca}</span></div>"
+        f"<span class='cmp-preco'><b>{reais_juntos(x['ppu'], unidade=True)}</b>{html_cartao(x)}{diferenca}</span></div>"
     )
 
 
@@ -768,9 +808,12 @@ def html_comparacao(comparacao):
     unidade = unidade_br(grupo[0]["unidade"]) if grupo[0]["unidade"] else "unidade"
     linhas = [html_linha(i, x, melhor) for i, x in enumerate(grupo[:TOP], start=1)]
     # A Farmazids aparece sempre: fora do top 3, entra no fim com a posição real.
+    mostrados = [x for i, x in enumerate(grupo, start=1) if i <= TOP or x["farmazids"]]
     linhas += [html_linha(i, x, melhor) for i, x in enumerate(grupo, start=1) if i > TOP and x["farmazids"]]
+    # Com algum "(cartão)", todas as linhas reservam o espaço dele: os valores ficam alinhados.
+    classe = "cmp-cartao cmp-com-cartao" if any(x["no_cartao"] for x in mostrados) else "cmp-cartao"
     cartao = (
-        "<div class='cmp-cartao'><div class='cmp-titulo'>"
+        f"<div class='{classe}'><div class='cmp-titulo'>"
         f"<b>{html.escape(nome_apresentacao(grupo, remedio))}</b><span>por {html.escape(unidade)}</span></div>"
         f"{''.join(linhas)}</div>"
     )
@@ -782,7 +825,7 @@ def html_comparacao(comparacao):
         abrev = ABREVIADAS.get(x["unidade"], x["unidade"] or "un")
         outras.append(
             f"<div class='cmp-outra'><span>{html.escape(nome_apresentacao(g, remedio))}</span>"
-            f"<span><b>{reais_juntos(x['ppu'], unidade=True)}</b>/{html.escape(abrev)} · "
+            f"<span><b>{reais_juntos(x['ppu'], unidade=True)}</b>/{html.escape(abrev)}{html_cartao(x)} · "
             f"{html.escape(x['nome_farmacia'])}</span></div>"
         )
     return (cartao + "<div class='cmp-cartao cmp-outras'><div class='cmp-outras-titulo'>"
@@ -918,13 +961,18 @@ def nome_falado(item):
     return NOMES_FALADOS.get(item["farmacia"], item["nome_farmacia"])
 
 
+def no_cartao_falado(item):
+    return " no cartão" if item.get("no_cartao") else ""
+
+
 def fala_da_comparacao(comparacao, chave):
     """Resumo falado da comparação principal. Devolve (texto, farmácia a destacar)."""
     grupo = comparacao["principal"]
     melhor = grupo[0]
     unidade = unidade_falada(melhor["unidade"])
     embalagem = embalagem_falada(melhor)
-    detalhe = f"{preco_falado(melhor['ppu'])} por {unidade}" + (f", {embalagem}" if embalagem else "")
+    detalhe = (f"{preco_falado(melhor['ppu'])} por {unidade}{no_cartao_falado(melhor)}"
+               + (f", {embalagem}" if embalagem else ""))
     frases = []
     if melhor["farmazids"]:
         frases.append(f"Boa notícia: a Farmazids é a mais barata, com {detalhe}.")
@@ -940,7 +988,7 @@ def fala_da_comparacao(comparacao, chave):
                           f"{'barata' if feminino else 'barato'} na {nome_falado(melhor)}: {detalhe}.")
         else:
             frases.append(f"{abertura} O mais barato está na {nome_falado(melhor)}: {detalhe}.")
-    seguintes = [f"a {nome_falado(x)}, com {preco_falado(x['ppu'])}" for x in grupo[1:TOP]]
+    seguintes = [f"a {nome_falado(x)}, com {preco_falado(x['ppu'])}{no_cartao_falado(x)}" for x in grupo[1:TOP]]
     if len(seguintes) == 2:
         frases.append(f"Logo depois vêm {seguintes[0]}, e {seguintes[1]}.")
     elif seguintes:
@@ -948,7 +996,8 @@ def fala_da_comparacao(comparacao, chave):
     posicao = next((i for i, x in enumerate(grupo, start=1) if x["farmazids"]), None)
     if posicao and posicao > TOP:
         lugar = ORDINAIS[posicao - 1] if posicao <= len(ORDINAIS) else f"{posicao}º"
-        frases.append(f"A Farmazids aparece em {lugar} lugar, com {preco_falado(grupo[posicao - 1]['ppu'])}.")
+        frases.append(f"A Farmazids aparece em {lugar} lugar, com {preco_falado(grupo[posicao - 1]['ppu'])}"
+                      f"{no_cartao_falado(grupo[posicao - 1])}.")
     return " ".join(frases), nome_falado(melhor)
 
 

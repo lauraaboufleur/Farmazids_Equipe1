@@ -67,3 +67,16 @@ FROM t1_eq1_farmazids.vw_precos_unitarios
 WHERE quantidade IS NULL AND concentracao IS NOT NULL
   AND date(data_coleta) = (SELECT max(date(data_coleta)) FROM t1_eq1_farmazids.vw_precos_concorrentes)
 LIMIT 30;
+
+-- 8. Preço de comparação (Pix; se vazio, cartão), na coleta mais recente.
+--    Esperado: São João com 100% 'cartao'; as outras quase tudo 'pix'; sem_preco perto de 0.
+SELECT farmacia,
+       count(*) AS produtos,
+       round(100.0 * count_if(preco_comparacao_origem = 'pix') / count(*), 1) AS pct_pix,
+       round(100.0 * count_if(preco_comparacao_origem = 'cartao') / count(*), 1) AS pct_cartao,
+       count_if(preco_comparacao IS NULL) AS sem_preco,
+       round(100.0 * count(preco_comparacao_por_unidade) / count(*), 1) AS pct_com_preco_por_unidade
+FROM t1_eq1_farmazids.vw_precos_unitarios
+WHERE date(data_coleta) = (SELECT max(date(data_coleta)) FROM t1_eq1_farmazids.vw_precos_concorrentes)
+GROUP BY farmacia
+ORDER BY farmacia;

@@ -2,6 +2,8 @@
 -- Gerado por infra/athena/regras_extracao.py: altere as regras lá e gere de novo, não edite à mão.
 -- Não altera a view de origem (vw_precos_concorrentes): só lê dela e acrescenta as colunas
 --   quantidade, unidade, concentracao, forma e o preço por unidade.
+-- Para comparar farmácias: preco_comparacao (o Pix; se vazio, o cartão), preco_comparacao_origem
+--   ('pix' ou 'cartao') e preco_comparacao_por_unidade. A São João não informa Pix.
 -- Quando a quantidade não aparece no nome, ela fica nula (o preço por unidade também): nunca é chutada.
 
 CREATE OR REPLACE VIEW t1_eq1_farmazids.vw_precos_unitarios AS
@@ -105,5 +107,8 @@ SELECT farmacia, sku, ean, nome, marca, categorias, preco_sem_desconto, preco_ca
   CASE WHEN qtd > 0 AND TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876
        THEN round(TRY_CAST(preco_pix AS double) / qtd, 4) END AS preco_pix_por_unidade,
   CASE WHEN qtd > 0 AND TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876
-       THEN round(TRY_CAST(preco_cartao AS double) / qtd, 4) END AS preco_cartao_por_unidade
+       THEN round(TRY_CAST(preco_cartao AS double) / qtd, 4) END AS preco_cartao_por_unidade,
+  COALESCE(CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END, CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END) AS preco_comparacao,
+  CASE WHEN CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END IS NOT NULL THEN 'pix' WHEN CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END IS NOT NULL THEN 'cartao' END AS preco_comparacao_origem,
+  CASE WHEN qtd > 0 THEN round(COALESCE(CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END, CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END) / qtd, 4) END AS preco_comparacao_por_unidade
 FROM passo3

@@ -317,6 +317,15 @@
 .cmp-preco { text-align: right; white-space: nowrap; }
 .cmp-preco b { font-weight: 700; }
 .cmp-dif { font-size: 12px; color: var(--cmp-vermelho); }
+/* "(cartão)": preço do cartão quando a farmácia não informa o Pix. No cartão com alguma
+   marca, a coluna do preço reserva o espaço dela em todas as linhas: os valores ficam alinhados. */
+.cmp-pagamento { margin-left: 4px; font-size: 11px; font-weight: 400; color: var(--cmp-suave); }
+.cmp-com-cartao .cmp-linha { grid-template-columns: 22px 110px 1fr 134px; }
+.cmp-com-cartao .cmp-preco {
+  display: grid; grid-template-columns: 1fr 46px; column-gap: 4px; align-items: baseline;
+}
+.cmp-com-cartao .cmp-preco b, .cmp-com-cartao .cmp-dif { grid-column: 1; }
+.cmp-com-cartao .cmp-pagamento { grid-column: 2; grid-row: 1; margin-left: 0; text-align: left; }
 /* Farmazids: fundo próprio; o padding lateral entra para o fundo não encostar no texto. */
 .cmp-linha.cmp-farmazids {
   background: var(--cmp-sua-fundo); border-radius: 8px; border-top-color: transparent;
@@ -400,6 +409,10 @@ html:not(.voz-tts) .voz-ouvir { display: none; }
   }
   .cmp-outra span:first-child { flex: 1; }
   .cmp-outra span:last-child { white-space: normal; max-width: 48%; }
+  /* Na coluna estreita do preço, o "(cartão)" vai para baixo do valor. */
+  .cmp-com-cartao .cmp-linha { grid-template-columns: 22px 1fr 76px; }
+  .cmp-com-cartao .cmp-preco { display: block; }
+  .cmp-preco .cmp-pagamento { display: block; margin-left: 0; text-align: right; }
 
   [data-testid="stMainBlockContainer"] { padding-left: 0.8rem; padding-right: 0.8rem; padding-bottom: 6rem; }
   [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho) { padding-top: 0.8rem; margin-bottom: 0.8rem; }

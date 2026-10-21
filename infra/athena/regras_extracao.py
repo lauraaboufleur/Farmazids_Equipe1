@@ -199,19 +199,38 @@ def preco_por_unidade(coluna):
             f"       THEN round(TRY_CAST({coluna} AS double) / qtd, 4) END")
 
 
+def preco_valido(coluna):
+    """O preço como número, ou nulo se vier vazio, zero ou com o valor de fora de estoque."""
+    return (f"CASE WHEN TRY_CAST({coluna} AS double) > 0 AND TRY_CAST({coluna} AS double) <> {SEM_ESTOQUE} "
+            f"THEN TRY_CAST({coluna} AS double) END")
+
+
+def precos_comparacao(colunas):
+    """Preço de comparação: o primeiro preço válido de colunas (ex.: o Pix; se vazio, o cartão),
+    de qual coluna ele veio (sem o "preco_": 'pix', 'cartao') e o preço por unidade dele."""
+    preco = "COALESCE(" + ", ".join(preco_valido(c) for c in colunas) + ")"
+    origem = ("CASE " + " ".join(f"WHEN {preco_valido(c)} IS NOT NULL THEN '{c.removeprefix('preco_')}'"
+                                 for c in colunas) + " END")
+    return (f",\n  {preco} AS preco_comparacao"
+            f",\n  {origem} AS preco_comparacao_origem"
+            f",\n  CASE WHEN qtd > 0 THEN round({preco} / qtd, 4) END AS preco_comparacao_por_unidade")
+
+
 CABECALHO = """-- {titulo}
 -- Gerado por infra/athena/regras_extracao.py: altere as regras lá e gere de novo, não edite à mão.
 -- Não altera a view de origem ({origem}): só lê dela e acrescenta as colunas
---   quantidade, unidade, concentracao, forma e o preço por unidade.
+--   quantidade, unidade, concentracao, forma e o preço por unidade.{extra}
 -- Quando a quantidade não aparece no nome, ela fica nula (o preço por unidade também): nunca é chutada.
 """
 
 
-def consulta(fonte, colunas_origem, precos):
+def consulta(fonte, colunas_origem, precos, comparacao=None):
     """WITH ... SELECT com as colunas da fonte mais as colunas novas."""
     normaliza, passo1, passo2, passo3 = blocos_extracao()
     cols = ", ".join(colunas_origem)
     precos_sql = "".join(f",\n  {preco_por_unidade(p)} AS {p}_por_unidade" for p in precos)
+    if comparacao:
+        precos_sql += precos_comparacao(comparacao)
     return f"""WITH base AS (
   SELECT {cols},
     {normaliza} AS t
@@ -240,10 +259,14 @@ SELECT {cols},
 FROM passo3"""
 
 
-def gerar_sql(nome_view, origem, colunas_origem, precos, titulo):
-    return (CABECALHO.format(titulo=titulo, origem=origem)
+def gerar_sql(nome_view, origem, colunas_origem, precos, titulo, comparacao=None):
+    extra = ""
+    if comparacao:
+        extra = ("\n-- Para comparar farmácias: preco_comparacao (o Pix; se vazio, o cartão), preco_comparacao_origem"
+                 "\n--   ('pix' ou 'cartao') e preco_comparacao_por_unidade. A São João não informa Pix.")
+    return (CABECALHO.format(titulo=titulo, origem=origem, extra=extra)
             + f"\nCREATE OR REPLACE VIEW t1_eq1_farmazids.{nome_view} AS\n"
-            + consulta(f"t1_eq1_farmazids.{origem}", colunas_origem, precos) + "\n")
+            + consulta(f"t1_eq1_farmazids.{origem}", colunas_origem, precos, comparacao) + "\n")
 
 
 # Nomes reais com o resultado que o extrair dá (conferido à mão). O teste no Athena
@@ -341,7 +364,8 @@ if __name__ == "__main__":
     pasta = Path(__file__).parent
     (pasta / "vw_precos_unitarios.sql").write_text(gerar_sql(
         "vw_precos_unitarios", "vw_precos_concorrentes", COLUNAS_CONCORRENTES, ["preco_pix", "preco_cartao"],
-        "Preço por unidade (comprimido, cápsula, ml, g...) dos concorrentes."), encoding="utf-8")
+        "Preço por unidade (comprimido, cápsula, ml, g...) dos concorrentes.",
+        comparacao=["preco_pix", "preco_cartao"]), encoding="utf-8")
     (pasta / "vw_precos_unitarios_farmazids.sql").write_text(gerar_sql(
         "vw_precos_unitarios_farmazids", "vw_medicamentos", ["ean", "nome", "preco_farmazids"], ["preco_farmazids"],
         "Preço por unidade da tabela de preços da Farmazids (sem data de coleta nem estoque)."), encoding="utf-8")

@@ -126,19 +126,21 @@ def _perguntar_simulado(pergunta, historico):
     if "compar" in pergunta.lower() or "barat" in pergunta.lower():
         # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql:
         # paracetamol em 3 apresentações + 1 combinação, a Farmazids fora do top 3, um produto
-        # sem quantidade e a resposta em lista (a tela deve usar só a primeira frase).
+        # sem quantidade e a resposta em lista (a tela deve usar só a primeira frase). A São João
+        # vem com o preço do cartão (ela não informa Pix): a tela marca "(cartão)".
         c = "2026-10-16"
 
         def linha(farmacia, produto, marca, ppu, preco, qtd, conc, forma, unidade, estoque="true", coleta=c):
-            return [farmacia, produto, marca, ppu, preco, qtd, conc, forma, unidade, estoque, coleta]
+            origem = None if farmacia == "farmazids" else "cartao" if farmacia == "sao_joao" else "pix"
+            return [farmacia, produto, marca, ppu, preco, origem, qtd, conc, forma, unidade, estoque, coleta]
 
         return {
             "ok": True,
             "resposta": f"- O paracetamol 750 mg sai mais barato na **FarmaPonte**, a R$ 0,34 por comprimido. "
                         f"A Farmazids fica em 5º lugar{contexto}.\n- Na apresentação de 500 mg, a São João vence.",
             "sql": "WITH ultima AS (...) ... WHERE LOWER(u.nome) LIKE '%paracetamol%' ... LIMIT 50",
-            "colunas": ["farmacia", "produto", "marca", "preco_por_unidade", "preco", "quantidade", "concentracao",
-                        "forma", "unidade", "em_estoque", "data_coleta"],
+            "colunas": ["farmacia", "produto", "marca", "preco_por_unidade", "preco", "origem_preco", "quantidade",
+                        "concentracao", "forma", "unidade", "em_estoque", "data_coleta"],
             "linhas": [
                 linha("farmaponte", "Paracetamol 750mg 20 Comprimidos Genérico EMS", "EMS", "0.3355", "6.71", "20.0",
                       "750mg", "comprimido", "comprimido"),
@@ -177,18 +179,20 @@ def _perguntar_simulado(pergunta, historico):
                   "sao_paulo": [5.10, 4.99, 4.99, 4.89, 4.79, 4.89]}
         return {
             "ok": True,
-            "resposta": f"(modo simulado) Evolução do menor preço Pix da dipirona{contexto}. O gráfico mostra "
+            "resposta": f"(modo simulado) Evolução do menor preço da dipirona{contexto}. O gráfico mostra "
                         "o menor preço encontrado em cada coleta, entre vários produtos.",
-            "sql": "SELECT date(data_coleta) AS data_coleta, farmacia, MIN(preco_pix) AS menor_preco_pix\n"
-                   "FROM vw_precos_concorrentes\n"
+            "sql": "SELECT date(data_coleta) AS data_coleta, farmacia, MIN(preco_comparacao) AS menor_preco,\n"
+                   "min_by(preco_comparacao_origem, preco_comparacao) AS origem_preco\n"
+                   "FROM vw_precos_unitarios\n"
                    "WHERE lower(nome) LIKE '%dipirona%'\n"
                    "GROUP BY 1, 2 ORDER BY 1 LIMIT 50",
-            "colunas": ["data_coleta", "farmacia", "menor_preco_pix"],
-            "linhas": [[data, farmacia, str(lista[i])] for farmacia, lista in precos.items()
-                       for i, data in enumerate(datas)],
+            # A São João vem com o preço do cartão (ela não informa Pix): o gráfico marca "(cartão)".
+            "colunas": ["data_coleta", "farmacia", "menor_preco", "origem_preco"],
+            "linhas": [[data, farmacia, str(lista[i]), "cartao" if farmacia == "sao_joao" else "pix"]
+                       for farmacia, lista in precos.items() for i, data in enumerate(datas)],
             "tipo": "dados",
             # Como na redigir-resposta: só há gráfico quando a pergunta pede.
-            "grafico": {"tipo": "linha", "x": "data_coleta", "y": ["menor_preco_pix"], "serie": "farmacia",
+            "grafico": {"tipo": "linha", "x": "data_coleta", "y": ["menor_preco"], "serie": "farmacia",
                         "pedido": True} if pediu_grafico else None,
         }
     return {
