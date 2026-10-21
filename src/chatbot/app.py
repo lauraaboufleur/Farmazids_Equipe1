@@ -14,6 +14,7 @@ import html
 import json
 import re
 import time
+import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -904,26 +905,110 @@ def eh_resultado_de_vendas(colunas):
     return {"total_vendas", "vendas_sem_preco"} <= minusculas
 
 
-def texto_de_vendas(texto, colunas):
+def tem_valor_estimado(colunas, linhas):
+    """Algum valor_estimado com número (resultado vazio ou só com vendas sem preço não tem)."""
+    minusculas = [c.lower() for c in colunas or []]
+    if "valor_estimado" not in minusculas:
+        return False
+    i = minusculas.index("valor_estimado")
+    return any((numero(limpo(l[i])) or 0) > 0 for l in linhas or [] if i < len(l))
+
+
+# Remédio filtrado pelo nome no SQL de vendas ("LOWER(nome) LIKE '%dipirona%'").
+REMEDIO_FILTRADO = re.compile(r"nome\)?\s+like\s+'%([^%']{3,})%'", re.IGNORECASE)
+# A pergunta é sobre as próprias vendas sem produto identificado (aí elas são a resposta, não um aviso).
+PERGUNTA_SOBRE_SEM_CADASTRO = re.compile(
+    r"sem cadastro|nao cadastrad|sem produto identificado|nao identificad|codigos? (?:de barras )?(?:sem|nao)")
+# Frase que só retoma as vendas sem cadastro ("Elas aparecem assim:") ou item de lista logo depois.
+CONTINUACAO = re.compile(
+    r"^\s*(?:[-*•]\s|\d+[.)]\s|(?:elas|eles|essas|esses|estas|estes|s[ãa]o elas|por farm[áa]cia)\b)", re.IGNORECASE)
+
+
+def separar_frases(texto):
+    """Frases e linhas do texto, cada uma com o separador que vem depois (juntas, refazem o texto)."""
+    partes = re.split(r"((?<=[.!?])[ \t]+|\s*\n\s*)", texto.strip())
+    return [partes[i] + (partes[i + 1] if i + 1 < len(partes) else "") for i in range(0, len(partes), 2)]
+
+
+def sem_repetir_avisos(texto):
+    """Tira do texto o que o aviso ⚠ da tela já mostra: a frase sobre vendas sem cadastro ou sem
+    produto identificado (a que traz também o valor, com "R$", fica) e, logo depois dela, o que só
+    a continua ("Elas aparecem assim:" e os itens de lista)."""
+    ficam, tirando = [], False
+    for frase in separar_frases(texto):
+        sobre = "R$" not in frase and re.search(r"sem cadastro|sem produto identificado", frase, re.IGNORECASE)
+        if sobre or (tirando and CONTINUACAO.search(frase)):
+            tirando = True
+            continue
+        tirando = False
+        ficam.append(frase)
+    return "".join(ficam).strip()
+
+
+def texto_de_vendas(texto, colunas, linhas, sql="", pergunta=""):
     """Nas respostas de vendas, garante o que o Bedrock pode esquecer: nunca "arrecadado" nem
-    "SKU", e a frase de que o valor é estimado com os preços atuais."""
+    "SKU", nada repetido dos avisos ⚠ da tela e a frase de que o valor é estimado com os preços
+    atuais, só quando há valor."""
     if not texto or not eh_resultado_de_vendas(colunas):
         return texto
     texto = re.sub(r"\bvalor(es)? arrecadad[oa]s?\b", "valor estimado (preços atuais)", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\barrecadad([oa]s?)\b", r"estimad\1", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\bSKUs\b", "códigos de barras", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\bSKU\b", "código de barras", texto, flags=re.IGNORECASE)
-    # As vendas sem produto identificado e com código sem cadastro ficam só no aviso da tela:
-    # sai a frase que só fala delas (a que traz também o valor, com "R$", fica).
-    # (O separador depois de cada frase fica junto dela, para não desmanchar parágrafos e listas.)
-    partes = re.split(r"((?<=[.!?])[ \t]+|\s*\n\s*)", texto.strip())
-    frases = [partes[i] + (partes[i + 1] if i + 1 < len(partes) else "") for i in range(0, len(partes), 2)]
-    texto = "".join(f for f in frases if "R$" in f or not re.search(
-        r"sem cadastro|sem produto identificado", f, re.IGNORECASE)).strip()
+    if avisos_de_vendas(colunas, linhas, sql, pergunta):
+        texto = sem_repetir_avisos(texto)
+    if not tem_valor_estimado(colunas, linhas):
+        # Sem valor nenhum, a explicação do valor estimado não faz sentido: sai, se o Bedrock escreveu.
+        return "".join(f for f in separar_frases(texto) if "preço de cada venda" not in f.lower()).strip()
     # A explicação (não só a palavra "estimado", que a troca acima pode ter posto).
     if "preço de cada venda" not in texto.lower():
         texto = texto.rstrip() + "\n\n" + FRASE_ESTIMADO
     return texto
+
+
+# A base de vendas só tem estas farmácias (as outras só têm preços coletados). A gerar-sql usa
+# a mesma lista: pergunta de vendas só de farmácia de fora nem vira consulta (CANNOT_ANSWER).
+PERGUNTA_DE_VENDAS = re.compile(r"\b(vend\w*|faturamento|faturou|faturad\w*|arrecad\w*|receita)\b")
+FARMACIAS_COM_VENDAS = {"Farmazids": r"\bfarmazids\b", "FarmaPonte": r"\bfarma\s?ponte\b",
+                        "VeraCruz": r"\bvera\s?cruz\b"}
+FARMACIAS_SEM_VENDAS = {"São João": r"\bsao\s?joao\b",
+                        "Drogaria São Paulo": r"\b(?:drogaria\s+)?sao\s?paulo\b"}
+
+
+def sem_acento(texto):
+    texto = unicodedata.normalize("NFD", str(texto or "").lower())
+    return "".join(c for c in texto if unicodedata.category(c) != "Mn")
+
+
+def farmacias_citadas(texto, farmacias):
+    texto = sem_acento(texto)
+    return [nome for nome, padrao in farmacias.items() if re.search(padrao, texto)]
+
+
+def aviso_sem_vendas(fora):
+    """"A base de vendas não inclui a São João; ..." para as farmácias de fora citadas."""
+    nomes = " nem a ".join(fora)
+    essa = "essa farmácia" if len(fora) == 1 else "essas farmácias"
+    return (f"A base de vendas não inclui a {nomes}; o histórico de vendas cobre apenas Farmazids, "
+            f"FarmaPonte e VeraCruz. Para {essa}, posso mostrar os preços coletados.")
+
+
+def texto_farmacias_sem_vendas(texto, resultado, pergunta, anteriores):
+    """Pergunta de vendas (ou continuação de uma) que cita farmácia fora da base de vendas:
+    só de fora (a gerar-sql devolve "sem dados"), a resposta vira a explicação; misturada com
+    farmácias de dentro, a explicação vai no fim."""
+    fora = farmacias_citadas(pergunta, FARMACIAS_SEM_VENDAS)
+    if not fora:
+        return texto
+    anterior = next((m for m in reversed(anteriores) if m["papel"] == "assistant"), None)
+    de_vendas = (PERGUNTA_DE_VENDAS.search(sem_acento(pergunta))
+                 or eh_resultado_de_vendas(resultado.get("colunas"))
+                 or (anterior is not None and eh_resultado_de_vendas(anterior.get("colunas"))))
+    if resultado.get("tipo") == "sem_dados" or not resultado.get("linhas"):
+        return aviso_sem_vendas(fora) if de_vendas else texto
+    if eh_resultado_de_vendas(resultado.get("colunas")):
+        return texto.rstrip() + "\n\n" + aviso_sem_vendas(fora)
+    return texto  # outro assunto (ex.: preços da São João): nada a explicar
 
 
 MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho", "agosto", "setembro",
@@ -942,17 +1027,17 @@ def inteiro_texto(n):
     return f"{n:,.0f}".replace(",", ".")
 
 
-def html_aviso_vendas(mensagem):
-    """Avisos das vendas (a base não tem preço; o produto vem do código de barras):
-    - sem filtro de remédio: "⚠ Valor parcial: X de Y vendas sem produto identificado...";
-    - com filtro de remédio (coluna vendas_codigo_sem_cadastro): as vendas com código sem cadastro
-      ficam fora do total e aparecem num aviso por farmácia: "⚠ FarmaPonte: 14 vendas com código de
-      barras sem cadastro no período (12 em janeiro, 2 em fevereiro); não é possível saber se alguma
-      é de dipirona."."""
-    colunas = [c.lower() for c in mensagem.get("colunas") or []]
+def avisos_de_vendas(colunas, linhas, sql="", pergunta=""):
+    """Avisos ⚠ das vendas (a base não tem preço; o produto vem do código de barras):
+    - "⚠ Valor parcial: X de Y vendas sem produto identificado...": quando há valor estimado e
+      alguma venda ficou fora dele, a menos que a pergunta seja sobre essas próprias vendas;
+    - com um remédio filtrado no SQL (as vendas com código sem cadastro ficam fora do total), um
+      aviso por farmácia: "⚠ FarmaPonte: 14 vendas com código de barras sem cadastro no período
+      (12 em janeiro, 2 em fevereiro); não é possível saber se alguma é de dipirona."."""
+    colunas = [c.lower() for c in colunas or []]
     if not eh_resultado_de_vendas(colunas):
-        return ""
-    linhas = mensagem.get("linhas") or []
+        return []
+    linhas = linhas or []
 
     def valor(linha, coluna):
         i = colunas.index(coluna) if coluna in colunas else None
@@ -961,13 +1046,13 @@ def html_aviso_vendas(mensagem):
     avisos = []
     total = sum(numero(valor(l, "total_vendas")) or 0 for l in linhas)
     sem = sum(numero(valor(l, "vendas_sem_preco")) or 0 for l in linhas)
-    if sem:
+    sobre_elas = PERGUNTA_SOBRE_SEM_CADASTRO.search(sem_acento(pergunta))
+    if sem and tem_valor_estimado(colunas, linhas) and not sobre_elas:
         avisos.append(f"⚠ Valor parcial: {inteiro_texto(sem)} de {inteiro_texto(total)} vendas sem produto "
                       "identificado (código de barras sem cadastro).")
-    if "vendas_codigo_sem_cadastro" in colunas:
-        # Um aviso por farmácia, com o total do período e quantas em cada mês.
-        achado = REMEDIO_NO_SQL.search(mensagem.get("sql") or "")
-        remedio = achado.group(1).strip().lower() if achado else "este remédio"
+    remedio = REMEDIO_FILTRADO.search(sql or "")
+    if "vendas_codigo_sem_cadastro" in colunas and remedio:
+        remedio = remedio.group(1).strip().lower()
         por_farmacia = {}
         for linha in linhas:
             n = numero(valor(linha, "vendas_codigo_sem_cadastro")) or 0
@@ -979,9 +1064,11 @@ def html_aviso_vendas(mensagem):
             total_farmacia = sum(n for _, n in meses)
             vendas = "venda" if total_farmacia == 1 else "vendas"
             anos = {str(m)[:4] for m, _ in meses if m}
+
             def quando(m):
                 texto = mes_br(m)
                 return texto.split(" de ")[0] if len(anos) == 1 and " de " in texto else texto
+
             if len(meses) == 1 and meses[0][0]:
                 periodo = f"em {mes_br(meses[0][0])}"
             elif all(m for m, _ in meses):
@@ -990,6 +1077,12 @@ def html_aviso_vendas(mensagem):
                 periodo = "no período"
             avisos.append(f"⚠ {nome}: {inteiro_texto(total_farmacia)} {vendas} com código de barras sem cadastro "
                           f"{periodo}; não é possível saber se alguma é de {remedio}.")
+    return avisos
+
+
+def html_aviso_vendas(mensagem):
+    avisos = avisos_de_vendas(mensagem.get("colunas"), mensagem.get("linhas"), mensagem.get("sql"),
+                              mensagem.get("pergunta"))
     if not avisos:
         return ""
     return ("<div class='aviso-vendas' role='status'>"
@@ -1251,7 +1344,8 @@ def mostrar(mensagem, chave):
             aviso = html_aviso_vendas(mensagem) if papel == "assistant" else ""
             if aviso:
                 st.html(aviso)
-            if mensagem.get("colunas"):
+            # Com zero linhas não há tabela nem gráfico (nada de tabela vazia com "empty").
+            if mensagem.get("colunas") and mensagem.get("linhas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
                 if comparacao:
                     # Na comparação, a tabela completa fica recolhida.
@@ -1400,7 +1494,10 @@ if st.session_state.pendente:
 
     st.session_state.mensagens.append({
         "papel": "assistant",
-        "texto": padronizar_farmacias(texto_de_vendas(resultado["resposta"], resultado["colunas"])),
+        "texto": padronizar_farmacias(texto_farmacias_sem_vendas(
+            texto_de_vendas(resultado["resposta"], resultado["colunas"], resultado["linhas"], resultado["sql"],
+                            st.session_state.mensagens[-1]["texto"]), resultado,
+            st.session_state.mensagens[-1]["texto"], st.session_state.mensagens[:-1])),
         "ok": resultado["ok"],
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
@@ -1408,7 +1505,8 @@ if st.session_state.pendente:
         # Confere aqui também, pela palavra "gráfico" na pergunta: sem ela, nada de gráfico.
         "pediu_grafico": bool(PEDIU_GRAFICO.search(st.session_state.mensagens[-1]["texto"])),
         "pergunta": st.session_state.mensagens[-1]["texto"],  # a comparação usa a apresentação pedida
-        "fala": texto_de_vendas(resultado.get("fala"), resultado["colunas"]),  # escrita para ser ouvida (redigir-resposta)
+        "fala": texto_de_vendas(resultado.get("fala"), resultado["colunas"], resultado["linhas"], resultado["sql"],
+                                st.session_state.mensagens[-1]["texto"]),  # escrita para ser ouvida (redigir-resposta)
         "colunas": resultado["colunas"],
         "linhas": resultado["linhas"],
         "duracao": resultado.get("duracao"),

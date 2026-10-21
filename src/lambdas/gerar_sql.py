@@ -43,7 +43,8 @@ DICAS_DADOS = (
     "de cada farmácia e produto. categorias é um array: use contains(categorias, '...') ou UNNEST.\n"
     "- vw_vendas: vendas (uma linha por venda) com só estas colunas: id_venda, farmacia, ean_gtin (código "
     "de barras do produto vendido), data_venda e quantidade_vendida. Não tem preço, valor, nome do produto "
-    "nem SKU: o produto e o preço vêm do código de barras (ver a regra de vendas).\n"
+    "nem SKU: o produto e o preço vêm do código de barras (ver a regra de vendas). Só tem vendas de "
+    "farmazids, farmaponte e veracruz.\n"
     "- vw_medicamentos: catálogo da Farmazids com o preço próprio (preco_farmazids).\n"
     "- vw_precos_unitarios: as mesmas linhas da vw_precos_concorrentes, mais o que foi lido do nome do "
     "produto: quantidade (da embalagem), unidade ('comprimido', 'capsula', 'ml', 'g', 'dose', 'sache'...), "
@@ -167,6 +168,9 @@ REGRA_VENDAS = (
     "FROM identificadas GROUP BY 1, 2 "
     "HAVING count_if(LOWER(nome) LIKE '%dipirona%') > 0 OR count_if(nome IS NULL) > 0 "
     "ORDER BY 1, 2 LIMIT 50\n"
+    "- A vw_vendas só tem Farmazids, FarmaPonte e VeraCruz. Se a pergunta de vendas (ou a continuação de "
+    "uma, como 'e na São João?') for só de outra farmácia (São João, Drogaria São Paulo), responda "
+    "exatamente CANNOT_ANSWER. Se citar farmácias de dentro e de fora, filtre só as de dentro.\n"
     "- Sem filtro de remédio (vendas totais), as vendas com código sem cadastro entram no total: "
     "count(*) AS total_vendas, count_if(preco IS NOT NULL) AS vendas_com_preco, count_if(preco IS NULL) AS "
     "vendas_sem_preco, sum(quantidade) AS unidades, round(sum(quantidade * preco), 2) AS valor_estimado, "
@@ -181,6 +185,20 @@ PERGUNTA_DE_PRECO = re.compile(
 )
 # Vendas seguem a regra de vendas, não o modelo de comparação ("valor" das vendas não é preço).
 PERGUNTA_DE_VENDAS = re.compile(r"\b(vend\w*|faturamento|faturou|faturad\w*|arrecad\w*|receita)\b")
+# Farmácias da base de vendas (vw_vendas) e as que não estão nela (só têm preços coletados),
+# no texto já sem acento. A tela usa a mesma lista para explicar.
+FARMACIAS_COM_VENDAS = {
+    "Farmazids": re.compile(r"\bfarmazids\b"),
+    "FarmaPonte": re.compile(r"\bfarma\s?ponte\b"),
+    "VeraCruz": re.compile(r"\bvera\s?cruz\b"),
+}
+FARMACIAS_SEM_VENDAS = {
+    "São João": re.compile(r"\bsao\s?joao\b"),
+    "Drogaria São Paulo": re.compile(r"\b(?:drogaria\s+)?sao\s?paulo\b"),
+}
+LEMBRETE_SO_COM_VENDAS = (
+    "\n\n(Lembrete: a vw_vendas não tem {fora}. Filtre só as farmácias que ela tem: {dentro}.)"
+)
 LEMBRETE_VENDAS = (
     "\n\n(Lembrete: é uma pergunta de vendas. Siga a regra de vendas: preço pelo código de barras, "
     "sempre com total_vendas, vendas_com_preco, vendas_sem_preco e valor_estimado.)"
@@ -292,14 +310,28 @@ def eh_pergunta_de_vendas(pergunta):
     return bool(PERGUNTA_DE_VENDAS.search(sem_acento(pergunta)))
 
 
+def farmacias_citadas(pergunta, farmacias):
+    texto = sem_acento(pergunta)
+    return [nome for nome, padrao in farmacias.items() if padrao.search(texto)]
+
+
 def lambda_handler(event, context):
     pergunta = event["pergunta"]
     erro_anterior = event.get("erro_anterior") or ""
     historico = event.get("historico") or []
 
+    if eh_pergunta_de_vendas(pergunta):
+        fora = farmacias_citadas(pergunta, FARMACIAS_SEM_VENDAS)
+        dentro = farmacias_citadas(pergunta, FARMACIAS_COM_VENDAS)
+        if fora and not dentro:
+            # Vendas só de farmácias fora da base: nem Bedrock nem Athena (a tela explica).
+            return {"sql": "CANNOT_ANSWER"}
+
     mensagem = texto_historico(historico) + pergunta
     if eh_pergunta_de_vendas(pergunta):
         mensagem += LEMBRETE_VENDAS
+        if fora:
+            mensagem += LEMBRETE_SO_COM_VENDAS.format(fora=" nem ".join(fora), dentro=", ".join(dentro))
     elif eh_pergunta_de_preco(pergunta):
         mensagem += LEMBRETE_PRECO
     ean = EAN_NA_PERGUNTA.search(pergunta)

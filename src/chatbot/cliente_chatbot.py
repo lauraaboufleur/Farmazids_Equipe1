@@ -129,25 +129,71 @@ def _perguntar_simulado(pergunta, historico):
         # vendas com código sem cadastro vêm à parte (o caso do cliente: FarmaPonte em janeiro, 1 venda
         # de dipirona e 12 com código sem cadastro). Sem remédio: vendas totais, com elas no total.
         # Com "arrecadado" na pergunta, o texto vem do jeito errado, para testar a correção da tela.
+        texto = pergunta.lower()
+        fora = any(f in texto for f in ("são joão", "sao joao", "são paulo", "sao paulo"))
+        dentro = any(f in texto for f in ("farmaponte", "farma ponte", "veracruz", "vera cruz", "farmazids"))
+        if fora and not dentro:
+            # Como na máquina: a gerar-sql devolve CANNOT_ANSWER (a base de vendas não tem essa farmácia).
+            return {"ok": True, "resposta": "Não encontrei nos dados disponíveis informação para responder a "
+                    "essa pergunta. Tente reformular ou perguntar sobre outro assunto.", "sql": "",
+                    "colunas": [], "linhas": [], "tipo": "sem_dados", "grafico": None}
+        if "sem cadastro" in texto and any(f in texto for f in ("liste", "lista", "quais")):
+            # Lista dos códigos sem cadastro: a pergunta é sobre eles (nada de "valor parcial: 22 de 22").
+            codigos = [("7891234567895", "FarmaPonte", 9), ("7896004700012", "FarmaPonte", 8),
+                       ("7899095200059", "VeraCruz", 5)]
+            return {"ok": True, "resposta": "Estes são os códigos de barras sem cadastro nas vendas: 3 códigos, "
+                    "em 22 vendas. Sem cadastro, não dá para saber qual é o produto nem estimar o valor.",
+                    "sql": "WITH vendas AS (...) ... WHERE preco IS NULL GROUP BY ean_gtin, farmacia ... LIMIT 50",
+                    "colunas": ["ean_gtin", "farmacia", "total_vendas", "vendas_com_preco", "vendas_sem_preco",
+                                "valor_estimado"],
+                    "linhas": [[c, f, str(n), "0", str(n), None] for c, f, n in codigos],
+                    "tipo": "dados", "grafico": None}
+        if "sem cadastro" in texto:
+            # Vendas totais por farmácia e mês, com a coluna dos códigos sem cadastro e SEM remédio filtrado.
+            dados = {"FarmaPonte": [(140, 128, 2210.5, 12), (131, 129, 2045.9, 2)],
+                     "VeraCruz": [(98, 97, 1530.2, 1), (102, 101, 1610.8, 1)]}
+            return {"ok": True, "resposta": "Em janeiro, a FarmaPonte teve 140 vendas, 12 delas com código de "
+                    "barras sem cadastro; a VeraCruz teve 98, com 1 sem cadastro. O valor é estimado com os "
+                    "preços atuais, porque a base de vendas não tem o preço de cada venda.",
+                    "sql": "WITH vendas AS (...) ... SELECT farmacia, mes, count(*) AS total_vendas, ..., "
+                           "count_if(nome IS NULL) AS vendas_codigo_sem_cadastro FROM identificadas ... LIMIT 50",
+                    "colunas": ["farmacia", "mes", "total_vendas", "vendas_com_preco", "vendas_sem_preco",
+                                "valor_estimado", "vendas_codigo_sem_cadastro"],
+                    "linhas": [[f, m, str(t), str(c), str(t - c), str(v), str(x)] for f, lista in dados.items()
+                               for m, (t, c, v, x) in zip(["2026-01", "2026-02"], lista)],
+                    "tipo": "dados", "grafico": None}
+        if "veracruz" in texto or "vera cruz" in texto:
+            # Resultado vazio, com a frase do valor estimado escrita por engano (a tela tira).
+            return {"ok": True, "resposta": "Não foram encontradas vendas de dipirona na VeraCruz em janeiro de "
+                    "2026. O valor é estimado com os preços atuais, porque a base de vendas não tem o preço de "
+                    "cada venda.", "sql": "WITH vendas AS (...) ... LIKE '%dipirona%' ... LIMIT 50",
+                    "colunas": ["farmacia", "mes", "total_vendas", "vendas_com_preco", "vendas_sem_preco",
+                                "unidades", "valor_estimado", "vendas_codigo_sem_cadastro"],
+                    "linhas": [], "tipo": "dados", "grafico": None}
         meses = ["2026-01", "2026-02", "2026-03"]
         filtrou = "dipirona" in pergunta.lower()
         if filtrou:
             # (vendas de dipirona, com preço, unidades, valor, vendas da farmácia no mês com código sem cadastro)
             dados = {"FarmaPonte": [(1, 1, 2, 20.0, 12), (7, 7, 9, 48.3, 2), (11, 11, 12, 61.9, 0)],
-                     "São João": [(8, 8, 9, 39.6, 0), (9, 9, 10, 44.1, 1), (7, 7, 8, 35.2, 0)]}
+                     "VeraCruz": [(8, 8, 9, 39.6, 0), (9, 9, 10, 44.1, 1), (7, 7, 8, 35.2, 0)]}
+            if fora:  # pergunta com São João e FarmaPonte: só a FarmaPonte tem vendas
+                dados = {"FarmaPonte": dados["FarmaPonte"]}
             colunas = ["farmacia", "mes", "total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades",
                        "valor_estimado", "vendas_codigo_sem_cadastro"]
             linhas = [[f, m, str(t), str(c), str(t - c), str(u), str(v), str(x)]
                       for f, lista in dados.items() for m, (t, c, u, v, x) in zip(meses, lista)]
+            # Repete as vendas sem cadastro, como o Bedrock fez no site (a tela tira a repetição).
             resposta = (f"Em janeiro, a FarmaPonte teve 1 venda de dipirona identificada, com valor estimado de "
-                        f"R$ 20,00 (preços atuais){contexto}. O valor é estimado com os preços atuais, porque a "
-                        "base de vendas não tem o preço de cada venda.")
+                        f"R$ 20,00 (preços atuais){contexto}. Também há vendas com código de barras sem cadastro "
+                        "no período. Elas aparecem assim:\n- FarmaPonte: 12 em janeiro e 2 em fevereiro\n"
+                        "- VeraCruz: 1 em fevereiro\n\nO valor é estimado com os preços atuais, porque a base de "
+                        "vendas não tem o preço de cada venda.")
             sql = ("WITH vendas AS (...) ... SELECT farmacia, ..., count_if(LOWER(nome) LIKE '%dipirona%') AS "
                    "total_vendas, ..., count_if(nome IS NULL) AS vendas_codigo_sem_cadastro FROM identificadas "
                    "GROUP BY 1, 2 ... LIMIT 50")
         else:
             dados = {"FarmaPonte": [(140, 128, 160, 2210.5), (131, 129, 150, 2045.9), (152, 152, 170, 2388.0)],
-                     "São João": [(98, 97, 110, 1530.2), (102, 101, 115, 1610.8), (95, 95, 104, 1499.3)]}
+                     "VeraCruz": [(98, 97, 110, 1530.2), (102, 101, 115, 1610.8), (95, 95, 104, 1499.3)]}
             colunas = ["farmacia", "mes", "total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades",
                        "valor_estimado"]
             linhas = [[f, m, str(t), str(c), str(t - c), str(u), str(v)]
