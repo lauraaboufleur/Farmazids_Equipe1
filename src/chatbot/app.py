@@ -1527,10 +1527,26 @@ with st.container(key="cabecalho"):
 # ---------- Chat ou Dashboard ----------
 # Bloqueado enquanto uma resposta está a caminho, como o botão do tema: trocar de
 # página redesenha a tela, e isso interromperia a resposta.
-pagina = st.segmented_control(
-    "Página", ["Chat", "Dashboard"], default="Chat", key="pagina", label_visibility="collapsed",
-    disabled=st.session_state.pendente is not None,
-) or "Chat"  # clicar de novo na opção marcada desmarca: aí volta para o chat
+# As cores vêm das variáveis do estilo.css, que o estilo-escuro.css troca no modo escuro
+# (o tema do Streamlit é sempre claro, então sem isto o botão ficaria claro no modo escuro).
+ESTILO_SELETOR = """<style>
+.st-key-seletor-pagina button {
+  background: var(--fundo-caixa); color: var(--texto-assistente);
+  border: 1px solid var(--divisoria-caixa); font-family: "Cinzel", serif; letter-spacing: 0.06em;
+}
+.st-key-seletor-pagina button:hover { border-color: var(--cor-lema); color: var(--cor-lema); }
+.st-key-seletor-pagina button[kind="segmented_controlActive"],
+.st-key-seletor-pagina [data-testid="stBaseButton-segmented_controlActive"] {
+  background: var(--botao-enviar); color: #FFFFFF; border-color: var(--botao-enviar);
+}
+.st-key-seletor-pagina button p { color: inherit; }
+</style>"""
+with st.container(key="seletor-pagina"):
+    st.html(ESTILO_SELETOR)
+    pagina = st.segmented_control(
+        "Página", ["Chat", "Dashboard"], default="Chat", key="pagina", label_visibility="collapsed",
+        disabled=st.session_state.pendente is not None,
+    ) or "Chat"  # clicar de novo na opção marcada desmarca: aí volta para o chat
 if pagina == "Dashboard":
     mostrar_dashboard({
         "escuro": modo_escuro(),
