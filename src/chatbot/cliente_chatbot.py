@@ -140,10 +140,8 @@ def _perguntar_simulado(pergunta, historico):
             linhas = [[f, m, str(t), str(c), str(t - c), str(u), str(v), str(x)]
                       for f, lista in dados.items() for m, (t, c, u, v, x) in zip(meses, lista)]
             resposta = (f"Em janeiro, a FarmaPonte teve 1 venda de dipirona identificada, com valor estimado de "
-                        f"R$ 20,00 (preços atuais){contexto}. Além disso, 12 vendas da FarmaPonte em janeiro de "
-                        "2026 têm código de barras sem cadastro; não é possível saber se alguma é de dipirona. "
-                        "O valor é estimado com os preços atuais, porque a base de vendas não tem o preço de "
-                        "cada venda.")
+                        f"R$ 20,00 (preços atuais){contexto}. O valor é estimado com os preços atuais, porque a "
+                        "base de vendas não tem o preço de cada venda.")
             sql = ("WITH vendas AS (...) ... SELECT farmacia, ..., count_if(LOWER(nome) LIKE '%dipirona%') AS "
                    "total_vendas, ..., count_if(nome IS NULL) AS vendas_codigo_sem_cadastro FROM identificadas "
                    "GROUP BY 1, 2 ... LIMIT 50")
@@ -155,12 +153,14 @@ def _perguntar_simulado(pergunta, historico):
             linhas = [[f, m, str(t), str(c), str(t - c), str(u), str(v)]
                       for f, lista in dados.items() for m, (t, c, u, v) in zip(meses, lista)]
             resposta = (f"Em janeiro, a FarmaPonte teve 140 vendas, com valor estimado de R$ 2.210,50 (preços "
-                        f"atuais); 12 delas ficaram sem produto identificado e fora do valor{contexto}. O valor "
-                        "é estimado com os preços atuais, porque a base de vendas não tem o preço de cada venda.")
+                        f"atuais){contexto}. O valor é estimado com os preços atuais, porque a base de vendas não "
+                        "tem o preço de cada venda.")
             sql = "WITH vendas AS (...) ... SELECT farmacia, ..., count(*) AS total_vendas, ... LIMIT 50"
         if "arrecad" in pergunta.lower():
-            resposta = (f"Em janeiro, a FarmaPonte teve 13 vendas e o valor arrecadado foi de R$ 20,00. Das 13, "
-                        f"12 tinham SKU sem cadastro{contexto}.")
+            resposta = (f"Em janeiro, a Farmaponte teve 13 vendas e o valor arrecadado foi de R$ 20,00, contra "
+                        f"R$ 39,60 na Sao Joao{contexto}. Além disso, 12 vendas da Farmaponte em janeiro de 2026 "
+                        "têm código de barras sem cadastro; não é possível saber se alguma é de dipirona. Das 13, "
+                        "12 tinham SKU sem cadastro.")
         return {
             "ok": True,
             "resposta": resposta,

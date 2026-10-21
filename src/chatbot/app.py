@@ -120,11 +120,27 @@ PALAVRAS_VAZIAS = re.compile(r"\b(?:None|none|NaN|nan|null|NULL|NaT|<NA>)\b")
 # Como os nomes das farmácias aparecem na tabela.
 NOMES_FARMACIAS = {
     "farmaponte": "FarmaPonte",
-    "veracruz": "Drogaria VeraCruz",
+    "veracruz": "VeraCruz",
     "sao_joao": "São João",
     "sao_paulo": "Drogaria São Paulo",
     "farmazids": "Farmazids",
 }
+
+# O texto do Bedrock com os nomes das farmácias como na tela (NOMES_FARMACIAS).
+GRAFIAS_FARMACIAS = [
+    (re.compile(r"\bfarma[\s_-]?ponte\b", re.IGNORECASE), "FarmaPonte"),
+    (re.compile(r"\b(?:drogaria\s+)?vera[\s_-]?cruz\b", re.IGNORECASE), "VeraCruz"),
+    (re.compile(r"\bs[ãa]o[\s_]jo[ãa]o\b", re.IGNORECASE), "São João"),
+    (re.compile(r"\b(?:drogaria\s+)?s[ãa]o[\s_]paulo\b", re.IGNORECASE), "Drogaria São Paulo"),
+    (re.compile(r"\bfarmazids\b", re.IGNORECASE), "Farmazids"),
+]
+
+
+def padronizar_farmacias(texto):
+    for padrao, nome in GRAFIAS_FARMACIAS:
+        texto = padrao.sub(nome, texto or "")
+    return texto
+
 
 BOAS_VINDAS = (
     "**Olá!** Sou o **assistente de dados da Farmazids.**\n\n"
@@ -897,6 +913,13 @@ def texto_de_vendas(texto, colunas):
     texto = re.sub(r"\barrecadad([oa]s?)\b", r"estimad\1", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\bSKUs\b", "códigos de barras", texto, flags=re.IGNORECASE)
     texto = re.sub(r"\bSKU\b", "código de barras", texto, flags=re.IGNORECASE)
+    # As vendas sem produto identificado e com código sem cadastro ficam só no aviso da tela:
+    # sai a frase que só fala delas (a que traz também o valor, com "R$", fica).
+    # (O separador depois de cada frase fica junto dela, para não desmanchar parágrafos e listas.)
+    partes = re.split(r"((?<=[.!?])[ \t]+|\s*\n\s*)", texto.strip())
+    frases = [partes[i] + (partes[i + 1] if i + 1 < len(partes) else "") for i in range(0, len(partes), 2)]
+    texto = "".join(f for f in frases if "R$" in f or not re.search(
+        r"sem cadastro|sem produto identificado", f, re.IGNORECASE)).strip()
     # A explicação (não só a palavra "estimado", que a troca acima pode ter posto).
     if "preço de cada venda" not in texto.lower():
         texto = texto.rstrip() + "\n\n" + FRASE_ESTIMADO
@@ -923,8 +946,9 @@ def html_aviso_vendas(mensagem):
     """Avisos das vendas (a base não tem preço; o produto vem do código de barras):
     - sem filtro de remédio: "⚠ Valor parcial: X de Y vendas sem produto identificado...";
     - com filtro de remédio (coluna vendas_codigo_sem_cadastro): as vendas com código sem cadastro
-      ficam fora do total, e cada farmácia e mês com alguma ganha "⚠ Além disso, X vendas de ... em
-      ... têm código de barras sem cadastro; não é possível saber se alguma é de [remédio]."."""
+      ficam fora do total e aparecem num aviso por farmácia: "⚠ FarmaPonte: 14 vendas com código de
+      barras sem cadastro no período (12 em janeiro, 2 em fevereiro); não é possível saber se alguma
+      é de dipirona."."""
     colunas = [c.lower() for c in mensagem.get("colunas") or []]
     if not eh_resultado_de_vendas(colunas):
         return ""
@@ -941,19 +965,31 @@ def html_aviso_vendas(mensagem):
         avisos.append(f"⚠ Valor parcial: {inteiro_texto(sem)} de {inteiro_texto(total)} vendas sem produto "
                       "identificado (código de barras sem cadastro).")
     if "vendas_codigo_sem_cadastro" in colunas:
+        # Um aviso por farmácia, com o total do período e quantas em cada mês.
         achado = REMEDIO_NO_SQL.search(mensagem.get("sql") or "")
         remedio = achado.group(1).strip().lower() if achado else "este remédio"
+        por_farmacia = {}
         for linha in linhas:
             n = numero(valor(linha, "vendas_codigo_sem_cadastro")) or 0
-            if not n:
-                continue
-            farmacia = valor(linha, "farmacia") or ""
-            nome = NOMES_FARMACIAS.get(farmacia.lower(), farmacia) or "a farmácia"
-            mes = valor(linha, "mes")
-            quando = f" em {mes_br(mes)}" if mes else ""
-            vendas, tem = ("venda", "tem") if n == 1 else ("vendas", "têm")
-            avisos.append(f"⚠ Além disso, {inteiro_texto(n)} {vendas} de {nome}{quando} {tem} código de barras "
-                          f"sem cadastro; não é possível saber se alguma é de {remedio}.")
+            if n:
+                farmacia = valor(linha, "farmacia") or ""
+                nome = NOMES_FARMACIAS.get(farmacia.lower(), farmacia) or "Farmácia"
+                por_farmacia.setdefault(nome, []).append((valor(linha, "mes"), n))
+        for nome, meses in por_farmacia.items():
+            total_farmacia = sum(n for _, n in meses)
+            vendas = "venda" if total_farmacia == 1 else "vendas"
+            anos = {str(m)[:4] for m, _ in meses if m}
+            def quando(m):
+                texto = mes_br(m)
+                return texto.split(" de ")[0] if len(anos) == 1 and " de " in texto else texto
+            if len(meses) == 1 and meses[0][0]:
+                periodo = f"em {mes_br(meses[0][0])}"
+            elif all(m for m, _ in meses):
+                periodo = "no período (" + ", ".join(f"{inteiro_texto(n)} em {quando(m)}" for m, n in meses) + ")"
+            else:
+                periodo = "no período"
+            avisos.append(f"⚠ {nome}: {inteiro_texto(total_farmacia)} {vendas} com código de barras sem cadastro "
+                          f"{periodo}; não é possível saber se alguma é de {remedio}.")
     if not avisos:
         return ""
     return ("<div class='aviso-vendas' role='status'>"
@@ -986,7 +1022,7 @@ def texto_para_fala(texto):
 # ---------- Fala da comparação (montada aqui, com os números do ranking) ----------
 ABERTURAS = ["Encontrei!", "Achei aqui.", "Vamos lá:"]
 NOMES_FALADOS = {  # como cada farmácia soa melhor na voz
-    "farmaponte": "Farma Ponte", "veracruz": "Drogaria Vera Cruz", "sao_joao": "São João",
+    "farmaponte": "Farma Ponte", "veracruz": "Vera Cruz", "sao_joao": "São João",
     "sao_paulo": "Drogaria São Paulo", "farmazids": "Farmazids",
 }
 ORDINAIS = ["primeiro", "segundo", "terceiro", "quarto", "quinto", "sexto", "sétimo", "oitavo", "nono", "décimo"]
@@ -1364,7 +1400,7 @@ if st.session_state.pendente:
 
     st.session_state.mensagens.append({
         "papel": "assistant",
-        "texto": texto_de_vendas(resultado["resposta"], resultado["colunas"]),
+        "texto": padronizar_farmacias(texto_de_vendas(resultado["resposta"], resultado["colunas"])),
         "ok": resultado["ok"],
         "sql": resultado["sql"],  # só para o histórico; mostrar() não exibe
         "tipo": resultado.get("tipo"),  # "dados", "teorica" ou "sem_dados"
