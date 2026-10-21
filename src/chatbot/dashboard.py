@@ -558,6 +558,30 @@ def estilo(v):
     .st-key-dashboard [data-testid="stMetricLabel"] p,
     .st-key-dashboard h4 {{ color: {v.cores["texto"]}; }}
     .st-key-dashboard [data-testid="stMetricLabel"] p {{ white-space: normal; }}
+    /* Abas, rótulos, legendas, caixas de escolha e botões: o tema do Streamlit é sempre claro,
+       então as cores vêm das variáveis do estilo.css (o estilo-escuro.css troca no modo escuro). */
+    .st-key-dashboard button[role="tab"] p,
+    .st-key-dashboard [data-testid="stWidgetLabel"] p,
+    .st-key-dashboard [data-testid="stExpander"] summary p,
+    .st-key-dashboard [data-testid="stMarkdownContainer"] p {{ color: {v.cores["texto"]}; }}
+    .st-key-dashboard [data-testid="stCaptionContainer"] p {{ color: var(--cor-hora); }}
+    .st-key-dashboard button[role="tab"][aria-selected="true"] p {{ color: var(--cor-lema); }}
+    .st-key-dashboard [data-baseweb="select"] > div,
+    .st-key-dashboard [data-baseweb="input"],
+    .st-key-dashboard [data-baseweb="input"] input,
+    .st-key-dashboard [data-testid="stExpander"] details {{
+        background: var(--fundo-caixa); color: var(--texto-assistente); border-color: var(--divisoria-caixa);
+    }}
+    .st-key-dashboard [data-baseweb="select"] input,
+    .st-key-dashboard [data-baseweb="select"] div {{ color: var(--texto-assistente); }}
+    .st-key-dashboard [data-testid="stBaseButton-secondary"],
+    .st-key-dashboard [data-testid="stBaseButton-segmented_control"] {{
+        background: var(--fundo-caixa); color: var(--texto-assistente); border-color: var(--divisoria-caixa);
+    }}
+    .st-key-dashboard [data-testid="stBaseButton-segmented_controlActive"] {{
+        background: var(--botao-enviar); color: #FFFFFF; border-color: var(--botao-enviar);
+    }}
+    .st-key-dashboard button p {{ color: inherit; }}
     </style>""")
 
 
