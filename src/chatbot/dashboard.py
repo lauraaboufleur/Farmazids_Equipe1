@@ -595,8 +595,8 @@ def mostrar_dashboard(visual):
                 dados = _dados(versao, v.simulado)
         except Exception as erro:
             print(f"[dashboard] erro ao carregar: {erro!r}")
-            st.error("Não consegui carregar os dados do dashboard. Confira se as credenciais da AWS têm "
-                     "permissão no Athena, no Glue e no bucket (iam-policy-dashboard.json) e tente de novo.")
+            st.error("Não consegui carregar os dados do dashboard. Confira se a state machine t1-eq1-dashboard "
+                     "e a Lambda t1-eq1-dashboard-dados estão criadas e tente de novo.")
             # O motivo exato (ex.: qual permissão falta). As mensagens da AWS não trazem as chaves.
             st.caption(f"Detalhe: {type(erro).__name__}: {erro}")
             if st.button("Tentar de novo", key="dash-tentar"):
