@@ -80,3 +80,49 @@ FROM t1_eq1_farmazids.vw_precos_unitarios
 WHERE date(data_coleta) = (SELECT max(date(data_coleta)) FROM t1_eq1_farmazids.vw_precos_concorrentes)
 GROUP BY farmacia
 ORDER BY farmacia;
+
+-- 9. Marca da FarmaPonte na coleta mais recente: sem marca antes e depois do preenchimento pelo EAN.
+--    "antes" = sem marca na coleta (marca_origem diferente de 'coleta'); "depois" = sem marca na view.
+WITH ultima AS (
+  SELECT max(date(data_coleta)) AS dia FROM t1_eq1_farmazids.vw_precos_concorrentes WHERE lower(farmacia) = 'farmaponte'
+)
+SELECT count(*) AS produtos,
+       count_if(marca_origem IS DISTINCT FROM 'coleta') AS sem_marca_antes,
+       count_if(marca_origem = 'ean') AS preenchidas_pelo_ean,
+       count_if(marca IS NULL) AS sem_marca_depois
+FROM t1_eq1_farmazids.vw_precos_unitarios, ultima
+WHERE lower(farmacia) = 'farmaponte' AND date(data_coleta) = ultima.dia;
+
+-- 9b. O "antes" direto na view de origem (deve bater com sem_marca_antes da consulta 9).
+SELECT count_if(marca IS NULL OR lower(trim(CAST(marca AS varchar))) IN ('', 'none', 'null', 'nan')) AS sem_marca
+FROM t1_eq1_farmazids.vw_precos_concorrentes
+WHERE lower(farmacia) = 'farmaponte'
+  AND date(data_coleta) = (SELECT max(date(data_coleta)) FROM t1_eq1_farmazids.vw_precos_concorrentes
+                           WHERE lower(farmacia) = 'farmaponte');
+
+-- 10. Nenhuma marca existente foi trocada: só a escrita muda ("Ems" -> "EMS").
+--     A coluna marcas_trocadas deve vir 0; as linhas mostram as grafias padronizadas.
+WITH pares AS (
+  SELECT DISTINCT trim(CAST(c.marca AS varchar)) AS antes, u.marca AS depois
+  FROM t1_eq1_farmazids.vw_precos_concorrentes c
+  JOIN t1_eq1_farmazids.vw_precos_unitarios u
+    ON u.farmacia = c.farmacia AND u.sku = c.sku AND u.data_coleta = c.data_coleta
+  WHERE u.marca_origem = 'coleta' AND trim(CAST(c.marca AS varchar)) <> u.marca
+)
+SELECT antes, depois,
+       count(*) OVER () AS grafias_padronizadas,
+       count_if(regexp_replace(translate(lower(antes), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', '')
+             <> regexp_replace(translate(lower(depois), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', ''))
+         OVER () AS marcas_trocadas
+FROM pares
+ORDER BY depois
+LIMIT 100;
+
+-- 11. Exemplos de marca preenchida pelo EAN na FarmaPonte (para conferir a olho).
+SELECT nome, marca, ean
+FROM t1_eq1_farmazids.vw_precos_unitarios
+WHERE lower(farmacia) = 'farmaponte' AND marca_origem = 'ean'
+  AND date(data_coleta) = (SELECT max(date(data_coleta)) FROM t1_eq1_farmazids.vw_precos_concorrentes
+                           WHERE lower(farmacia) = 'farmaponte')
+ORDER BY nome
+LIMIT 50;

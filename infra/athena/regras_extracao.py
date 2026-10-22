@@ -224,15 +224,132 @@ CABECALHO = """-- {titulo}
 """
 
 
-def consulta(fonte, colunas_origem, precos, comparacao=None):
-    """WITH ... SELECT com as colunas da fonte mais as colunas novas."""
+def chave_marca(expr):
+    """A marca sem acento, maiúsculas, espaços nem pontuação: "Prati-Donaduzzi" e "prati donaduzzi"
+    viram a mesma chave ("pratidonaduzzi")."""
+    return f"regexp_replace(translate(lower({expr}), {_q(ACENTOS_DE)}, {_q(ACENTOS_PARA)}), '[^a-z0-9]', '')"
+
+
+def palavras(expr, bordas=False):
+    """O texto sem acento, em minúsculas, com tudo que não é letra ou número virando um espaço
+    ("Genérico Biosintética" -> "generico biosintetica"); com bordas, um espaço em cada ponta."""
+    sql = (f"trim(regexp_replace(translate(lower({expr}), {_q(ACENTOS_DE)}, {_q(ACENTOS_PARA)}), "
+           "'[^a-z0-9]+', ' '))")
+    return f"' ' || {sql} || ' '" if bordas else sql
+
+
+def ctes_marca(fonte):
+    """CTEs que padronizam a marca e preenchem a vazia pelo código de barras (sem nova coleta):
+    - escrita: entre as grafias da mesma marca, a com acentos e maiúsculas certos ("Ems" -> "EMS",
+      "Ache" -> "Aché"), nunca um nome longo todo em maiúsculas; no empate, a mais usada;
+    - marca vazia: a do mesmo EAN (sem zeros à esquerda) nas outras farmácias, na coleta mais recente
+      de cada uma; vale a mais frequente (uma vez por farmácia); empate fica vazio; se o nome do
+      produto citar outro laboratório (marca do cadastro em 5+ produtos diferentes, palavra inteira,
+      sem acento; nem contida na votada nem contendo a votada), também fica vazio;
+    - marca que já existe nunca é trocada (só a escrita é padronizada).
+    Termina em com_marca, com marca_final e marca_origem ('coleta', 'ean' ou nulo)."""
+    return f"""fonte AS (
+  SELECT c.*,
+    CASE WHEN lower(trim(CAST(c.marca AS varchar))) IN ('', 'none', 'null', 'nan') THEN NULL
+         ELSE trim(CAST(c.marca AS varchar)) END AS marca_lida,
+    regexp_replace(trim(CAST(c.ean AS varchar)), '^0+', '') AS ean_n,
+    {palavras('c.nome', bordas=True)} AS nome_n
+  FROM {fonte} c
+),
+grafias AS (
+  -- a melhor grafia de cada marca: nada de nome longo todo em maiúsculas; depois a com mais acentos
+  -- ("Aché", "Farmoquímica") e mais maiúsculas ("EMS", "GSK", "FiberMais"); depois a mais usada
+  SELECT chave, element_at(array_agg(marca_lida ORDER BY
+      CASE WHEN marca_lida = upper(marca_lida) AND length(regexp_replace(marca_lida, '[^\\p{{L}}]', '')) > 4 THEN 1 ELSE 0 END,
+      length(regexp_replace(marca_lida, '[^\\p{{L}}]|[A-Za-z]', '')) DESC,
+      length(regexp_replace(marca_lida, '[^\\p{{Lu}}]', '')) DESC,
+      n DESC, marca_lida), 1) AS marca_padrao
+  FROM (SELECT {chave_marca('marca_lida')} AS chave, marca_lida, count(*) AS n
+        FROM fonte WHERE marca_lida IS NOT NULL GROUP BY 1, 2)
+  GROUP BY chave
+),
+marcas_conhecidas AS (
+  -- laboratórios do cadastro, em palavras: marcas em produtos de pelo menos 5 nomes diferentes (pela
+  -- primeira palavra do nome). Linha de produto ("Bravan", "Neosaldina") fica de fora: tem 1 ou 2.
+  SELECT DISTINCT palavras FROM (
+    SELECT {palavras('g.marca_padrao')} AS palavras
+    FROM grafias g
+    JOIN (SELECT {chave_marca('marca_lida')} AS chave, count(DISTINCT split_part(trim(nome_n), ' ', 1)) AS nomes
+          FROM fonte WHERE marca_lida IS NOT NULL GROUP BY 1) v ON v.chave = g.chave
+    WHERE v.nomes >= 5)
+  WHERE palavras <> ''
+),
+ultima_coleta AS (
+  SELECT farmacia, max(date(data_coleta)) AS dia FROM fonte GROUP BY farmacia
+),
+marcas_ean AS (
+  -- a marca de cada EAN em cada farmácia, na coleta mais recente dela
+  SELECT DISTINCT f.farmacia, f.ean_n, g.marca_padrao
+  FROM fonte f
+  JOIN ultima_coleta u ON u.farmacia = f.farmacia AND date(f.data_coleta) = u.dia
+  JOIN grafias g ON g.chave = {chave_marca('f.marca_lida')}
+  WHERE f.marca_lida IS NOT NULL AND f.ean_n <> ''
+),
+votos AS (
+  -- para cada farmácia, quantas OUTRAS farmácias dão cada marca ao EAN
+  SELECT a.farmacia AS alvo, m.ean_n, m.marca_padrao, count(*) AS n
+  FROM (SELECT DISTINCT farmacia FROM fonte) a
+  JOIN marcas_ean m ON m.farmacia <> a.farmacia
+  GROUP BY 1, 2, 3
+),
+escolha AS (
+  -- a mais frequente; empate fica sem marca
+  SELECT alvo, ean_n, marca_padrao FROM (
+    SELECT votos.*, rank() OVER (PARTITION BY alvo, ean_n ORDER BY n DESC) AS posicao,
+      count(*) OVER (PARTITION BY alvo, ean_n, n) AS empatadas
+    FROM votos)
+  WHERE posicao = 1 AND empatadas = 1
+),
+candidatas AS (
+  -- marca votada para cada nome sem marca
+  SELECT DISTINCT f.nome_n, e.marca_padrao AS votada
+  FROM fonte f JOIN escolha e ON e.alvo = f.farmacia AND e.ean_n = f.ean_n
+  WHERE f.marca_lida IS NULL
+),
+conflitos AS (
+  -- o nome cita outro laboratório (palavra inteira, sem acento): "... Genérico Biosintética" não vira
+  -- "Medley". Se uma marca contém a outra ("EMS Genérico" e "EMS"), é a mesma empresa: não conta.
+  SELECT DISTINCT c.nome_n, c.votada
+  FROM (SELECT nome_n, votada, {palavras('votada')} AS votada_palavras FROM candidatas) c
+  JOIN marcas_conhecidas k
+    ON strpos(c.nome_n, ' ' || k.palavras || ' ') > 0
+   AND strpos(' ' || c.votada_palavras || ' ', ' ' || k.palavras || ' ') = 0
+   AND strpos(' ' || k.palavras || ' ', ' ' || c.votada_palavras || ' ') = 0
+),
+com_marca AS (
+  SELECT f.*,
+    COALESCE(g.marca_padrao, f.marca_lida, CASE WHEN x.votada IS NULL THEN e.marca_padrao END) AS marca_final,
+    CASE WHEN f.marca_lida IS NOT NULL THEN 'coleta'
+         WHEN e.marca_padrao IS NOT NULL AND x.votada IS NULL THEN 'ean' END AS marca_origem
+  FROM fonte f
+  LEFT JOIN grafias g ON g.chave = {chave_marca('f.marca_lida')}
+  LEFT JOIN escolha e ON f.marca_lida IS NULL AND e.alvo = f.farmacia AND e.ean_n = f.ean_n
+  LEFT JOIN conflitos x ON x.nome_n = f.nome_n AND x.votada = e.marca_padrao
+),
+"""
+
+
+def consulta(fonte, colunas_origem, precos, comparacao=None, marca_por_ean=False):
+    """WITH ... SELECT com as colunas da fonte mais as colunas novas. Com marca_por_ean, a marca
+    sai padronizada e, quando vazia, preenchida pelo EAN (ctes_marca), mais a coluna marca_origem."""
     normaliza, passo1, passo2, passo3 = blocos_extracao()
     cols = ", ".join(colunas_origem)
     precos_sql = "".join(f",\n  {preco_por_unidade(p)} AS {p}_por_unidade" for p in precos)
     if comparacao:
         precos_sql += precos_comparacao(comparacao)
-    return f"""WITH base AS (
-  SELECT {cols},
+    inicio, cols_base = "", cols
+    if marca_por_ean:
+        inicio = ctes_marca(fonte)
+        fonte = "com_marca"
+        cols_base = ", ".join("marca_final AS marca" if c == "marca" else c for c in colunas_origem) + ", marca_origem"
+        precos_sql += ",\n  marca_origem"
+    return f"""WITH {inicio}base AS (
+  SELECT {cols_base},
     {normaliza} AS t
   FROM {fonte}
 ),
@@ -259,14 +376,18 @@ SELECT {cols},
 FROM passo3"""
 
 
-def gerar_sql(nome_view, origem, colunas_origem, precos, titulo, comparacao=None):
+def gerar_sql(nome_view, origem, colunas_origem, precos, titulo, comparacao=None, marca_por_ean=False):
     extra = ""
     if comparacao:
         extra = ("\n-- Para comparar farmácias: preco_comparacao (o Pix; se vazio, o cartão), preco_comparacao_origem"
                  "\n--   ('pix' ou 'cartao') e preco_comparacao_por_unidade. A São João não informa Pix.")
+    if marca_por_ean:
+        extra += ("\n-- Marca: escrita padronizada (acentos e maiúsculas certos); vazia, vem do mesmo EAN nas outras farmácias"
+                  "\n--   (coleta mais recente; a mais frequente; empate, ou nome citando outra marca, fica vazio)."
+                  "\n--   marca_origem: 'coleta' ou 'ean'.")
     return (CABECALHO.format(titulo=titulo, origem=origem, extra=extra)
             + f"\nCREATE OR REPLACE VIEW t1_eq1_farmazids.{nome_view} AS\n"
-            + consulta(f"t1_eq1_farmazids.{origem}", colunas_origem, precos, comparacao) + "\n")
+            + consulta(f"t1_eq1_farmazids.{origem}", colunas_origem, precos, comparacao, marca_por_ean) + "\n")
 
 
 # Nomes reais com o resultado que o extrair dá (conferido à mão). O teste no Athena
@@ -365,7 +486,7 @@ if __name__ == "__main__":
     (pasta / "vw_precos_unitarios.sql").write_text(gerar_sql(
         "vw_precos_unitarios", "vw_precos_concorrentes", COLUNAS_CONCORRENTES, ["preco_pix", "preco_cartao"],
         "Preço por unidade (comprimido, cápsula, ml, g...) dos concorrentes.",
-        comparacao=["preco_pix", "preco_cartao"]), encoding="utf-8")
+        comparacao=["preco_pix", "preco_cartao"], marca_por_ean=True), encoding="utf-8")
     (pasta / "vw_precos_unitarios_farmazids.sql").write_text(gerar_sql(
         "vw_precos_unitarios_farmazids", "vw_medicamentos", ["ean", "nome", "preco_farmazids"], ["preco_farmazids"],
         "Preço por unidade da tabela de preços da Farmazids (sem data de coleta nem estoque)."), encoding="utf-8")

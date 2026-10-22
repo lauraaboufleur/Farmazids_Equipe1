@@ -4,15 +4,101 @@
 --   quantidade, unidade, concentracao, forma e o preço por unidade.
 -- Para comparar farmácias: preco_comparacao (o Pix; se vazio, o cartão), preco_comparacao_origem
 --   ('pix' ou 'cartao') e preco_comparacao_por_unidade. A São João não informa Pix.
+-- Marca: escrita padronizada (acentos e maiúsculas certos); vazia, vem do mesmo EAN nas outras farmácias
+--   (coleta mais recente; a mais frequente; empate, ou nome citando outra marca, fica vazio).
+--   marca_origem: 'coleta' ou 'ean'.
 -- Quando a quantidade não aparece no nome, ela fica nula (o preço por unidade também): nunca é chutada.
 
 CREATE OR REPLACE VIEW t1_eq1_farmazids.vw_precos_unitarios AS
-WITH base AS (
-  SELECT farmacia, sku, ean, nome, marca, categorias, preco_sem_desconto, preco_cartao, preco_pix, em_estoque, desconto_valor, desconto_percentual, url, data_coleta, dt,
+WITH fonte AS (
+  SELECT c.*,
+    CASE WHEN lower(trim(CAST(c.marca AS varchar))) IN ('', 'none', 'null', 'nan') THEN NULL
+         ELSE trim(CAST(c.marca AS varchar)) END AS marca_lida,
+    regexp_replace(trim(CAST(c.ean AS varchar)), '^0+', '') AS ean_n,
+    ' ' || trim(regexp_replace(translate(lower(c.nome), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]+', ' ')) || ' ' AS nome_n
+  FROM t1_eq1_farmazids.vw_precos_concorrentes c
+),
+grafias AS (
+  -- a melhor grafia de cada marca: nada de nome longo todo em maiúsculas; depois a com mais acentos
+  -- ("Aché", "Farmoquímica") e mais maiúsculas ("EMS", "GSK", "FiberMais"); depois a mais usada
+  SELECT chave, element_at(array_agg(marca_lida ORDER BY
+      CASE WHEN marca_lida = upper(marca_lida) AND length(regexp_replace(marca_lida, '[^\p{L}]', '')) > 4 THEN 1 ELSE 0 END,
+      length(regexp_replace(marca_lida, '[^\p{L}]|[A-Za-z]', '')) DESC,
+      length(regexp_replace(marca_lida, '[^\p{Lu}]', '')) DESC,
+      n DESC, marca_lida), 1) AS marca_padrao
+  FROM (SELECT regexp_replace(translate(lower(marca_lida), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', '') AS chave, marca_lida, count(*) AS n
+        FROM fonte WHERE marca_lida IS NOT NULL GROUP BY 1, 2)
+  GROUP BY chave
+),
+marcas_conhecidas AS (
+  -- laboratórios do cadastro, em palavras: marcas em produtos de pelo menos 5 nomes diferentes (pela
+  -- primeira palavra do nome). Linha de produto ("Bravan", "Neosaldina") fica de fora: tem 1 ou 2.
+  SELECT DISTINCT palavras FROM (
+    SELECT trim(regexp_replace(translate(lower(g.marca_padrao), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]+', ' ')) AS palavras
+    FROM grafias g
+    JOIN (SELECT regexp_replace(translate(lower(marca_lida), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', '') AS chave, count(DISTINCT split_part(trim(nome_n), ' ', 1)) AS nomes
+          FROM fonte WHERE marca_lida IS NOT NULL GROUP BY 1) v ON v.chave = g.chave
+    WHERE v.nomes >= 5)
+  WHERE palavras <> ''
+),
+ultima_coleta AS (
+  SELECT farmacia, max(date(data_coleta)) AS dia FROM fonte GROUP BY farmacia
+),
+marcas_ean AS (
+  -- a marca de cada EAN em cada farmácia, na coleta mais recente dela
+  SELECT DISTINCT f.farmacia, f.ean_n, g.marca_padrao
+  FROM fonte f
+  JOIN ultima_coleta u ON u.farmacia = f.farmacia AND date(f.data_coleta) = u.dia
+  JOIN grafias g ON g.chave = regexp_replace(translate(lower(f.marca_lida), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', '')
+  WHERE f.marca_lida IS NOT NULL AND f.ean_n <> ''
+),
+votos AS (
+  -- para cada farmácia, quantas OUTRAS farmácias dão cada marca ao EAN
+  SELECT a.farmacia AS alvo, m.ean_n, m.marca_padrao, count(*) AS n
+  FROM (SELECT DISTINCT farmacia FROM fonte) a
+  JOIN marcas_ean m ON m.farmacia <> a.farmacia
+  GROUP BY 1, 2, 3
+),
+escolha AS (
+  -- a mais frequente; empate fica sem marca
+  SELECT alvo, ean_n, marca_padrao FROM (
+    SELECT votos.*, rank() OVER (PARTITION BY alvo, ean_n ORDER BY n DESC) AS posicao,
+      count(*) OVER (PARTITION BY alvo, ean_n, n) AS empatadas
+    FROM votos)
+  WHERE posicao = 1 AND empatadas = 1
+),
+candidatas AS (
+  -- marca votada para cada nome sem marca
+  SELECT DISTINCT f.nome_n, e.marca_padrao AS votada
+  FROM fonte f JOIN escolha e ON e.alvo = f.farmacia AND e.ean_n = f.ean_n
+  WHERE f.marca_lida IS NULL
+),
+conflitos AS (
+  -- o nome cita outro laboratório (palavra inteira, sem acento): "... Genérico Biosintética" não vira
+  -- "Medley". Se uma marca contém a outra ("EMS Genérico" e "EMS"), é a mesma empresa: não conta.
+  SELECT DISTINCT c.nome_n, c.votada
+  FROM (SELECT nome_n, votada, trim(regexp_replace(translate(lower(votada), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]+', ' ')) AS votada_palavras FROM candidatas) c
+  JOIN marcas_conhecidas k
+    ON strpos(c.nome_n, ' ' || k.palavras || ' ') > 0
+   AND strpos(' ' || c.votada_palavras || ' ', ' ' || k.palavras || ' ') = 0
+   AND strpos(' ' || k.palavras || ' ', ' ' || c.votada_palavras || ' ') = 0
+),
+com_marca AS (
+  SELECT f.*,
+    COALESCE(g.marca_padrao, f.marca_lida, CASE WHEN x.votada IS NULL THEN e.marca_padrao END) AS marca_final,
+    CASE WHEN f.marca_lida IS NOT NULL THEN 'coleta'
+         WHEN e.marca_padrao IS NOT NULL AND x.votada IS NULL THEN 'ean' END AS marca_origem
+  FROM fonte f
+  LEFT JOIN grafias g ON g.chave = regexp_replace(translate(lower(f.marca_lida), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', '')
+  LEFT JOIN escolha e ON f.marca_lida IS NULL AND e.alvo = f.farmacia AND e.ean_n = f.ean_n
+  LEFT JOIN conflitos x ON x.nome_n = f.nome_n AND x.votada = e.marca_padrao
+),
+base AS (
+  SELECT farmacia, sku, ean, nome, marca_final AS marca, categorias, preco_sem_desconto, preco_cartao, preco_pix, em_estoque, desconto_valor, desconto_percentual, url, data_coleta, dt, marca_origem,
     ' ' || regexp_replace(replace(regexp_replace(translate(lower(nome), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'),
         '(?<![\d.,])([1-9]\d{0,2})(?:\.|\s(?=\d{3}\s*ui))(\d{3})(?![\d.,])', '$1$2'), ',', '.'),
         '\bc/(\d)', 'c/ $1') || ' ' AS t
-  FROM t1_eq1_farmazids.vw_precos_concorrentes
+  FROM com_marca
 ),
 passo1 AS (
   SELECT base.*,
@@ -110,5 +196,6 @@ SELECT farmacia, sku, ean, nome, marca, categorias, preco_sem_desconto, preco_ca
        THEN round(TRY_CAST(preco_cartao AS double) / qtd, 4) END AS preco_cartao_por_unidade,
   COALESCE(CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END, CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END) AS preco_comparacao,
   CASE WHEN CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END IS NOT NULL THEN 'pix' WHEN CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END IS NOT NULL THEN 'cartao' END AS preco_comparacao_origem,
-  CASE WHEN qtd > 0 THEN round(COALESCE(CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END, CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END) / qtd, 4) END AS preco_comparacao_por_unidade
+  CASE WHEN qtd > 0 THEN round(COALESCE(CASE WHEN TRY_CAST(preco_pix AS double) > 0 AND TRY_CAST(preco_pix AS double) <> 9999876 THEN TRY_CAST(preco_pix AS double) END, CASE WHEN TRY_CAST(preco_cartao AS double) > 0 AND TRY_CAST(preco_cartao AS double) <> 9999876 THEN TRY_CAST(preco_cartao AS double) END) / qtd, 4) END AS preco_comparacao_por_unidade,
+  marca_origem
 FROM passo3
