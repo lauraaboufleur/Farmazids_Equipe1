@@ -49,8 +49,13 @@ SYSTEM = (
     "Escreva em português natural: nunca nomes de colunas nem campos crus (ex.: 'concentracao: 200mg/ml; "
     "forma: injetavel', 'preco_farmazids'); diga 'o preço da Farmazids', '200 mg/ml', 'injetável'. Valores "
     "em reais sempre como R$ 1.234,56; nunca números crus como 100.380000.\n"
-    "Farmazids x concorrentes (colunas preco_farmazids, menor_preco_concorrente e diferenca): é o mesmo "
-    "produto nas duas pontas. Diga em 1 ou 2 frases onde a diferença é maior, em reais, sem percentual.\n\n"
+    "Farmazids x concorrência (colunas farmazids_rs, menor_concorrente_rs, acima_pct ou abaixo_pct): é o mesmo "
+    "produto nas duas pontas. Diga em 1 ou 2 frases quantos produtos aparecem e onde a diferença é maior. Se "
+    "ignorados_acima_200 for maior que zero, diga quantos produtos ficaram de fora por diferença acima de "
+    "200% (provável erro de dado).\n"
+    "Vendas em unidades (colunas unidades, unidades_antes, unidades_agora, queda_pct, diferenca_pct): diga o "
+    "período (últimos 3 ou 6 meses até a última venda registrada) e o principal destaque, sem valor em reais "
+    "de venda.\n\n"
     "Nomes das farmácias: nos dados elas podem aparecer como códigos. Na resposta, escreva sempre "
     "exatamente assim: FarmaPonte, VeraCruz, São João, Drogaria São Paulo e Farmazids (nunca Farmaponte, "
     "Vera Cruz, São Paulo sozinho nem os códigos como sao_joao).\n"
@@ -127,7 +132,8 @@ GRAFICO = {
 # ---------- Modo rápido (sem Bedrock) ----------
 NOMES_FARMACIAS = {"farmaponte": "FarmaPonte", "veracruz": "VeraCruz", "sao_joao": "São João",
                    "sao_paulo": "Drogaria São Paulo", "farmazids": "Farmazids"}
-CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades", "vendas_codigo_sem_cadastro"}
+CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades", "vendas_codigo_sem_cadastro",
+             "unidades_antes", "unidades_agora", "ignorados_acima_200"}
 # Palavras dos nomes de coluna com o acento de volta ("diferenca_por_unidade" -> "diferença por unidade").
 ACENTOS = {"preco": "preço", "precos": "preços", "diferenca": "diferença", "farmacia": "farmácia",
            "farmacias": "farmácias", "concentracao": "concentração", "medio": "médio", "media": "média",
@@ -160,8 +166,12 @@ def inteiro(valor):
 
 
 def em_dinheiro(coluna):
-    return coluna not in CONTAGENS and "percent" not in coluna and (
-        "preco" in coluna or "valor" in coluna or coluna.startswith("diferenca"))
+    return coluna not in CONTAGENS and "percent" not in coluna and not coluna.endswith("_pct") and (
+        "preco" in coluna or "valor" in coluna or coluna.startswith("diferenca") or coluna.endswith("_rs"))
+
+
+def pct(valor):
+    return f"{abs(valor):.0f}%"
 
 
 def rotulo(coluna):
@@ -196,16 +206,50 @@ def frase_rapida(colunas, linhas):
         frase = f"Foram {inteiro(total)} {'venda' if total == 1 else 'vendas'}"
         return frase + (f", com valor estimado de {reais(estimado)} (preços atuais)." if estimado else ".")
 
-    # Farmazids x concorrentes, o mesmo produto: a maior diferença em reais.
-    if {"preco_farmazids", "menor_preco_concorrente", "diferenca"} <= set(indice):
-        primeira = max(linhas, key=lambda l: abs(numero(valor(l, "diferenca")) or 0))
-        dif = numero(valor(primeira, "diferenca")) or 0
-        quem = farmacia(valor(primeira, "farmacia"))
-        frase = (f"A maior diferença é em {valor(primeira, 'produto') or 'um produto'}: a Farmazids cobra "
-                 f"{reais(numero(valor(primeira, 'preco_farmazids')))} e a {quem}, "
-                 f"{reais(numero(valor(primeira, 'menor_preco_concorrente')))} ({reais(abs(dif))} "
-                 f"{'a menos' if dif > 0 else 'a mais'}).")
-        return frase + f" São {inteiro(len(linhas))} produtos na lista."
+    # Atalhos "Onde estamos mais caros/baratos": o mesmo produto, a maior diferença em %.
+    lado = "acima_pct" if "acima_pct" in indice else "abaixo_pct" if "abaixo_pct" in indice else None
+    if lado and "farmazids_rs" in indice:
+        primeira = linhas[0]  # já vem ordenado pela maior diferença em %
+        ignorados = int(numero(valor(primeira, "ignorados_acima_200")) or 0)
+        extra = (f"; {inteiro(ignorados)} {'ficou' if ignorados == 1 else 'ficaram'} de fora por diferença acima "
+                 "de 200% (provável erro de dado)") if ignorados else ""
+        return (f"A Farmazids está mais {'cara' if lado == 'acima_pct' else 'barata'} que a concorrência em "
+                f"{inteiro(len(linhas))} produtos da lista; a maior diferença é em {valor(primeira, 'produto')}, "
+                f"{reais(numero(valor(primeira, 'farmazids_rs')))} contra "
+                f"{reais(numero(valor(primeira, 'menor_concorrente_rs')))} na "
+                f"{farmacia(valor(primeira, 'farmacia'))} ({'+' if lado == 'acima_pct' else '−'}"
+                f"{pct(numero(valor(primeira, lado)))}){extra}.")
+
+    # Atalho "Produtos em queda": a maior queda de unidades.
+    if "queda_pct" in indice:
+        primeira = linhas[0]
+        conc = numero(valor(primeira, "menor_concorrente_rs"))
+        return (f"O produto que mais caiu nos últimos 3 meses foi {valor(primeira, 'produto')}: de "
+                f"{inteiro(numero(valor(primeira, 'unidades_antes')) or 0)} para "
+                f"{inteiro(numero(valor(primeira, 'unidades_agora')) or 0)} unidades (−"
+                f"{pct(numero(valor(primeira, 'queda_pct')) or 0)})"
+                + (f", com o menor preço concorrente de {reais(conc)} na {farmacia(valor(primeira, 'farmacia'))}."
+                   if conc else "."))
+
+    # Atalho "Mais vendidos x concorrência": o primeiro da lista e o preço dele lá fora.
+    if "unidades" in indice and "diferenca_pct" in indice:
+        primeira = linhas[0]
+        conc, dif = numero(valor(primeira, "menor_concorrente_rs")), numero(valor(primeira, "diferenca_pct"))
+        frase = (f"O mais vendido da Farmazids nos últimos 3 meses foi {valor(primeira, 'produto')}, com "
+                 f"{inteiro(numero(valor(primeira, 'unidades')) or 0)} unidades")
+        if conc and dif is not None:
+            frase += (f"; o menor preço na concorrência é {reais(conc)} na {farmacia(valor(primeira, 'farmacia'))}, "
+                      f"e a Farmazids está {pct(dif)} {'acima' if dif > 0 else 'abaixo'}" if dif else
+                      f"; o menor preço na concorrência é {reais(conc)}, igual ao da Farmazids")
+        return frase + "."
+
+    # Atalho "Vendas por mês": unidades de cada farmácia no período.
+    if {"farmacia", "mes", "unidades"} <= set(indice) and len(nomes) == 3:
+        totais = {}
+        for l in linhas:
+            totais[farmacia(valor(l, "farmacia"))] = totais.get(farmacia(valor(l, "farmacia")), 0) + (numero(valor(l, "unidades")) or 0)
+        partes = [f"{nome} {inteiro(total)}" for nome, total in sorted(totais.items(), key=lambda t: -t[1])]
+        return "Nos últimos 6 meses, as unidades vendidas foram: " + ", ".join(partes) + "."
 
     # Comparação por unidade: o mais barato na apresentação vendida pelo maior número de farmácias.
     por_unidade = next((n for n in nomes if PRECO_POR_UNIDADE.search(n)), None)

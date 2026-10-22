@@ -44,6 +44,15 @@ NOMES_COLUNAS = {
     "preco_farmazids": "Preço Farmazids",
     "menor_preco_concorrente": "Menor preço concorrente",
     "diferenca": "Diferença (R$)",
+    # Atalhos (gerar-sql): Farmazids x concorrência e vendas em unidades
+    "farmazids_rs": "Farmazids",
+    "menor_concorrente_rs": "Menor concorrente",
+    "acima_pct": "Acima",
+    "abaixo_pct": "Abaixo",
+    "diferenca_pct": "Diferença (%)",
+    "unidades_antes": "Unid. antes",
+    "unidades_agora": "Unid. agora",
+    "queda_pct": "Queda",
     "marca": "Marca",
     "ean": "EAN",
     "sku": "SKU",
@@ -119,11 +128,28 @@ def larguras(colunas):
     """Com 5 colunas ou mais, cada coluna ganha uma largura fixa (o produto, mais estreito), para
     todas caberem sem rolar para o lado, inclusive a última (ex.: "Diferença (R$)"). O cabeçalho
     comprido aparece abreviado; o nome inteiro fica na dica do mouse."""
+    colunas = [c for c in colunas if c.lower() not in COLUNAS_OCULTAS]
     if len(colunas) < 5:
         return LARGURAS
-    fixas = {nome_coluna(c): st.column_config.Column(width=120) for c in colunas}
-    return {**fixas, **LARGURAS, "Produto": st.column_config.Column(width=180),
-            "Farmácia": st.column_config.Column(width=140)}
+    if len(colunas) == 5:
+        fixas = {nome_coluna(c): st.column_config.Column(width=120) for c in colunas}
+        return {**fixas, **LARGURAS, "Produto": st.column_config.Column(width=180),
+                "Farmácia": st.column_config.Column(width=140)}
+    # 6 colunas ou mais (atalhos): cada uma do tamanho do rótulo e dos números, e o Produto com o que
+    # sobra da largura da conversa (~760 px no computador), para nenhuma coluna ficar cortada.
+    rotulos = [nome_coluna(c) for c in colunas]
+    fixas = {r: LARGURA_POR_ROTULO.get(r, 95) for r in rotulos if r != "Produto"}
+    produto = max(130, 760 - sum(fixas.values()))
+    return {**{r: st.column_config.Column(width=w) for r, w in fixas.items()},
+            "Produto": st.column_config.Column(width=produto)}
+
+
+LARGURA_POR_ROTULO = {"Farmazids": 90, "Menor concorrente": 145, "Farmácia": 135, "Diferença (R$)": 115,
+                      "Diferença (%)": 110, "Acima": 70, "Abaixo": 70, "Queda": 70, "Unidades": 85,
+                      "Unid. antes": 95, "Unid. agora": 95}
+
+# Colunas que servem ao texto, não à tabela (ex.: quantos produtos ficaram de fora por diferença acima de 200%).
+COLUNAS_OCULTAS = {"ignorados_acima_200"}
 
 # Como sim/não aparece na tabela (ex.: coluna Estoque).
 MARCAS = {"true": "✓", "false": "✗"}
@@ -274,18 +300,21 @@ BOTAO_MENU = "<button type='button' class='menu-botao' title='Atalhos' aria-labe
 
 # ---------- Atalhos (coluna lateral) ----------
 # Para mudar os atalhos, é só editar aqui: (grupo, [(rótulo do botão, pergunta enviada)]).
+# Cada pergunta tem o SQL pronto na gerar-sql (pela pergunta exata: mudou aqui, mude lá também).
+# ("escrever", texto) não envia: escreve o texto na caixa de pergunta, para a pessoa completar.
 ATALHOS = [
-    ("Preços", [
-        ("Dipirona 1g mais barata", "Qual farmácia tem a dipirona 1g mais barata?"),
-        ("Comparar paracetamol 750mg", "Compare o preço do paracetamol 750mg nas farmácias"),
-    ]),
-    ("Comparar", [
-        ("Onde a Farmazids está mais cara", "Em quais produtos a Farmazids está mais cara que os concorrentes?"),
-        ("Evolução do preço", "Mostre um gráfico da evolução do preço da dipirona"),
+    ("Concorrência", [
+        ("Onde estamos mais caros", "Em quais produtos a Farmazids está mais cara que a concorrência?"),
+        ("Onde estamos mais baratos", "Em quais produtos a Farmazids está mais barata que a concorrência?"),
+        ("Comparar um remédio…", ("escrever", "Compare o preço de ")),
     ]),
     ("Vendas", [
-        ("Mais vendidos da Farmazids", "Quais os 10 produtos mais vendidos pela Farmazids em 2026?"),
-        ("Vendas por mês", "Vendas de cada farmácia por mês no 1º semestre de 2026"),
+        ("Mais vendidos × concorrência", "Quais os 10 produtos mais vendidos da Farmazids nos últimos 3 meses e "
+                                         "como está o preço deles na concorrência?"),
+        ("Vendas por mês", "Quantas unidades cada farmácia vendeu por mês nos últimos 6 meses?"),
+    ]),
+    ("Oportunidades", [
+        ("Produtos em queda", "Quais produtos da Farmazids mais caíram em vendas nos últimos 3 meses?"),
     ]),
 ]
 
@@ -378,6 +407,15 @@ def decimal_br(valor):
     return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+MESES_CURTOS = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"]
+
+
+def mes_curto(valor):
+    """"2026-01" -> "jan/2026"."""
+    achado = re.match(r"(\d{4})-(\d{2})", str(valor))
+    return f"{MESES_CURTOS[int(achado.group(2)) - 1]}/{achado.group(1)}" if achado else str(valor)
+
+
 def percentual_br(valor):
     """12.345 -> "12,3%"."""
     if vazio(valor):
@@ -432,6 +470,7 @@ def montar_tabela(colunas, linhas):
     ordenação funcionar), "true"/"false" vira caixa de seleção, preços aparecem
     em reais e datas no formato brasileiro."""
     tabela = pd.DataFrame(linhas, columns=colunas)
+    tabela = tabela[[c for c in tabela.columns if c.lower() not in COLUNAS_OCULTAS]]
     # Primeiro, tudo que é "sem informação" vira vazio de verdade (None), para
     # não atrapalhar a conversão dos preços em número.
     tabela = tabela.astype(object).map(lambda v: None if vazio(v) else v)
@@ -458,6 +497,10 @@ def montar_tabela(colunas, linhas):
             tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_ORIGEM_PRECO.get(str(v).lower(), v))
             continue
 
+        if chave == "mes":
+            tabela[coluna] = valores.map(lambda v: VAZIO if v is None else mes_curto(v))
+            continue
+
         if chave in ("unidade", "forma"):
             tabela[coluna] = valores.map(lambda v: VAZIO if v is None else NOMES_UNIDADES_FORMAS.get(str(v).lower(), v))
             continue
@@ -478,6 +521,12 @@ def montar_tabela(colunas, linhas):
             continue
         if PRECO_POR_UNIDADE.match(chave):
             funcao = em_reais_unidade
+        elif chave == "acima_pct":
+            funcao = lambda v: VAZIO if vazio(v) else f"+{v:.0f}%"
+        elif chave in ("abaixo_pct", "queda_pct"):
+            funcao = lambda v: VAZIO if vazio(v) else f"−{abs(v):.0f}%"
+        elif chave == "diferenca_pct":
+            funcao = lambda v: VAZIO if vazio(v) else ("0%" if round(v) == 0 else f"{'+' if v > 0 else '−'}{abs(v):.0f}%")
         elif "percent" in chave or chave.startswith("pct") or chave.endswith("pct"):
             funcao = percentual_br
         elif em_dinheiro(chave):
@@ -517,13 +566,13 @@ def montar_tabela(colunas, linhas):
 
 # ---------- Gráfico ----------
 # Contagens com "preco" no nome (vendas_com_preco...): são quantidades, não dinheiro.
-CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades"}
+CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades", "unidades_antes", "unidades_agora"}
 
 
 def em_dinheiro(coluna):
     coluna = coluna.lower()
-    return coluna not in CONTAGENS and "percent" not in coluna and (
-        "preco" in coluna or "valor" in coluna or coluna.startswith("diferenca"))
+    return coluna not in CONTAGENS and "percent" not in coluna and not coluna.endswith("_pct") and (
+        "preco" in coluna or "valor" in coluna or coluna.startswith("diferenca") or coluna.endswith("_rs"))
 
 
 def rotulo_menor(rotulo):
@@ -1581,9 +1630,14 @@ def montar_historico(mensagens):
 
 
 def html_atalho(rotulo, pergunta):
-    """Botão que manda a pergunta pela caixa (assets/voz.js), como se a pessoa tivesse digitado."""
-    return (f"<button type='button' class='atalho-botao' data-pergunta='{html.escape(pergunta, quote=True)}'>"
-            f"{html.escape(rotulo)}</button>")
+    """Botão que manda a pergunta pela caixa (assets/voz.js), como se a pessoa tivesse digitado; com
+    ("escrever", texto), só escreve o texto na caixa, com o cursor no fim."""
+    if isinstance(pergunta, tuple):
+        # O espaço do fim some no HTML da coluna: o voz.js põe de volta (o cursor fica pronto para o nome).
+        acao = f"data-escrever='{html.escape(pergunta[1].strip(), quote=True)}'"
+    else:
+        acao = f"data-pergunta='{html.escape(pergunta, quote=True)}'"
+    return f"<button type='button' class='atalho-botao' {acao}>{html.escape(rotulo)}</button>"
 
 
 def nova_conversa():
@@ -1690,6 +1744,10 @@ with st.container(key="cabecalho"):
             "<p class='aviso-simulado'>Modo simulado: respostas de teste, sem consultar a AWS.</p>",
             unsafe_allow_html=True,
         )
+
+# Logo do PDF de uma resposta (a versão para fundo claro): escondido na tela, só na impressão.
+with st.container(key="impressao-logo"):
+    st.image(TITULO, width=200)
 
 # ---------- Chat ou Dashboard ----------
 # Bloqueado enquanto uma resposta está a caminho, como o botão do tema: trocar de

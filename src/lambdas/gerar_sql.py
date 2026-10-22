@@ -97,22 +97,112 @@ def sql_comparacao_ean(ean):
     return sql_comparacao(ean_sem_zeros("ean") + filtro, ean_sem_zeros("ean") + filtro)
 
 
-def sql_farmazids_x_concorrentes(mais_cara=True):
-    """Farmazids x concorrentes, o MESMO produto (mesmo EAN): produto, preço Farmazids, menor preço
-    concorrente (preço de comparação), farmácia e diferença em R$ (sem percentual)."""
-    filtro, ordem = ("f.preco_farmazids > m.menor_preco_concorrente", "diferenca DESC") if mais_cara \
-        else ("f.preco_farmazids < m.menor_preco_concorrente", "diferenca ASC")
+# ---------- Atalhos da tela: SQL pronto, sem o Bedrock ----------
+# Farmazids x concorrência: o MESMO produto (mesmo EAN sem zeros à esquerda), o preço da Farmazids
+# (tabela de preços) e o menor preço de comparação (Pix; senão, cartão) na coleta mais recente.
+LIMITE_PRECO_FARMAZIDS = 500     # só produtos da Farmazids até R$ 500
+LIMITE_DIFERENCA_PCT = 200       # diferença acima disso é provável erro de dado: fica fora (e é contada)
+
+
+def ctes_farmazids_concorrencia():
     return (
-        f"WITH menor AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(preco_comparacao) AS menor_preco_concorrente, "
+        f"fz AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(nome) AS produto, "
+        "min(TRY_CAST(preco_farmazids AS double)) AS preco FROM vw_precos_unitarios_farmazids "
+        "WHERE ean IS NOT NULL GROUP BY 1), "
+        f"conc AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, "
         "min_by(farmacia, preco_comparacao) AS farmacia FROM vw_precos_unitarios "
-        "WHERE ean IS NOT NULL AND preco_comparacao IS NOT NULL GROUP BY 1), "
-        f"farmazids AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(nome) AS produto, "
-        "min(TRY_CAST(preco_farmazids AS double)) AS preco_farmazids FROM vw_precos_unitarios_farmazids "
-        "WHERE ean IS NOT NULL GROUP BY 1) "
-        "SELECT f.produto, f.preco_farmazids, m.menor_preco_concorrente, m.farmacia, "
-        "round(f.preco_farmazids - m.menor_preco_concorrente, 2) AS diferenca "
-        f"FROM farmazids f JOIN menor m ON m.ean_n = f.ean_n WHERE {filtro} ORDER BY {ordem} LIMIT 20"
+        "WHERE ean IS NOT NULL AND preco_comparacao > 0 GROUP BY 1)"
     )
+
+
+def sql_farmazids_x_concorrentes(mais_cara=True):
+    """Atalhos "Onde estamos mais caros/baratos": produto, preço Farmazids (até R$ 500), menor concorrente,
+    farmácia, diferença em R$ e em % (acima: sobre o concorrente; abaixo: quanto a Farmazids fica abaixo
+    dele). Diferença acima de 200% (o preço maior passa de 3 vezes o menor) fica fora e é contada em
+    ignorados_acima_200. As 20 maiores diferenças em %."""
+    if mais_cara:
+        comparacao, diferenca = "f.preco > c.menor", "f.preco - c.menor"
+        pct, grandeza, coluna = "100.0 * (f.preco - c.menor) / c.menor", "100.0 * (f.preco - c.menor) / c.menor", "acima_pct"
+    else:
+        comparacao, diferenca = "f.preco < c.menor", "c.menor - f.preco"
+        pct, grandeza, coluna = "100.0 * (c.menor - f.preco) / c.menor", "100.0 * (c.menor - f.preco) / f.preco", "abaixo_pct"
+    return (
+        f"WITH {ctes_farmazids_concorrencia()}, "
+        "base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, "
+        f"round({diferenca}, 2) AS diferenca, round({pct}, 1) AS pct, {grandeza} AS grandeza "
+        "FROM fz f JOIN conc c ON c.ean_n = f.ean_n "
+        f"WHERE f.preco > 0 AND f.preco <= {LIMITE_PRECO_FARMAZIDS} AND {comparacao}) "
+        f"SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS {coluna}, "
+        f"(SELECT count(*) FROM base WHERE grandeza > {LIMITE_DIFERENCA_PCT}) AS ignorados_acima_200 "
+        f"FROM base WHERE grandeza <= {LIMITE_DIFERENCA_PCT} ORDER BY pct DESC LIMIT 20"
+    )
+
+
+def sql_mais_vendidos_x_concorrencia():
+    """Os 10 mais vendidos da Farmazids nos últimos 3 meses (até a última data_venda dela), com o preço da
+    Farmazids, o menor preço concorrente, a farmácia e a diferença em %."""
+    return (
+        "WITH ultima AS (SELECT max(date(data_venda)) AS dia FROM vw_vendas WHERE LOWER(farmacia) = 'farmazids'), "
+        f"vendas AS (SELECT {ean_sem_zeros('ean_gtin')} AS ean_n, sum(TRY_CAST(quantidade_vendida AS double)) AS unidades "
+        "FROM vw_vendas, ultima WHERE LOWER(farmacia) = 'farmazids' "
+        "AND date(data_venda) > date_add('month', -3, ultima.dia) GROUP BY 1), "
+        f"{ctes_farmazids_concorrencia()} "
+        "SELECT COALESCE(f.produto, c.nome, 'Código ' || v.ean_n || ' sem cadastro') AS produto, v.unidades, "
+        "f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, "
+        "round(100.0 * (f.preco - c.menor) / c.menor, 1) AS diferenca_pct "
+        "FROM vendas v LEFT JOIN fz f ON f.ean_n = v.ean_n LEFT JOIN conc c ON c.ean_n = v.ean_n "
+        "ORDER BY v.unidades DESC LIMIT 10"
+    )
+
+
+def sql_vendas_por_mes():
+    """Unidades vendidas por farmácia (as da base de vendas) e mês, nos últimos 6 meses do calendário
+    até a última data_venda (o mês dela conta, mesmo incompleto). Sem valor estimado."""
+    return (
+        "WITH ultima AS (SELECT max(date(data_venda)) AS dia FROM vw_vendas) "
+        "SELECT farmacia, date_format(date(data_venda), '%Y-%m') AS mes, "
+        "sum(TRY_CAST(quantidade_vendida AS double)) AS unidades "
+        "FROM vw_vendas, ultima WHERE date(data_venda) >= date_add('month', -5, date_trunc('month', ultima.dia)) "
+        "GROUP BY 1, 2 ORDER BY 2, 1 LIMIT 50"
+    )
+
+
+def sql_produtos_em_queda():
+    """Produtos da Farmazids com a maior queda de unidades: últimos 3 meses x os 3 anteriores (até a
+    última data_venda dela), só com pelo menos 10 unidades antes; com o menor preço concorrente ao lado."""
+    return (
+        "WITH ultima AS (SELECT max(date(data_venda)) AS dia FROM vw_vendas WHERE LOWER(farmacia) = 'farmazids'), "
+        f"itens AS (SELECT {ean_sem_zeros('ean_gtin')} AS ean_n, TRY_CAST(quantidade_vendida AS double) AS q, "
+        "date(data_venda) AS d FROM vw_vendas WHERE LOWER(farmacia) = 'farmazids'), "
+        "periodos AS (SELECT ean_n, "
+        "COALESCE(sum(CASE WHEN d > date_add('month', -3, ultima.dia) THEN q END), 0) AS agora, "
+        "COALESCE(sum(CASE WHEN d <= date_add('month', -3, ultima.dia) AND d > date_add('month', -6, ultima.dia) "
+        "THEN q END), 0) AS antes FROM itens, ultima GROUP BY ean_n), "
+        f"{ctes_farmazids_concorrencia()} "
+        "SELECT COALESCE(f.produto, c.nome, 'Código ' || p.ean_n || ' sem cadastro') AS produto, "
+        "p.antes AS unidades_antes, p.agora AS unidades_agora, "
+        "round(100.0 * (p.antes - p.agora) / p.antes, 1) AS queda_pct, f.preco AS farmazids_rs, "
+        "c.menor AS menor_concorrente_rs, c.farmacia "
+        "FROM periodos p LEFT JOIN fz f ON f.ean_n = p.ean_n LEFT JOIN conc c ON c.ean_n = p.ean_n "
+        "WHERE p.antes >= 10 AND p.agora < p.antes ORDER BY queda_pct DESC LIMIT 15"
+    )
+
+
+# A pergunta exata de cada atalho da tela (sem acento, minúsculas, sem o "?" do fim) -> o SQL dele.
+ATALHOS = {
+    "em quais produtos a farmazids esta mais cara que a concorrencia": lambda: sql_farmazids_x_concorrentes(True),
+    "em quais produtos a farmazids esta mais barata que a concorrencia": lambda: sql_farmazids_x_concorrentes(False),
+    "quais os 10 produtos mais vendidos da farmazids nos ultimos 3 meses e como esta o preco deles na "
+    "concorrencia": sql_mais_vendidos_x_concorrencia,
+    "quantas unidades cada farmacia vendeu por mes nos ultimos 6 meses": sql_vendas_por_mes,
+    "quais produtos da farmazids mais cairam em vendas nos ultimos 3 meses": sql_produtos_em_queda,
+}
+
+
+def sql_do_atalho(pergunta):
+    chave = " ".join(sem_acento(pergunta).split()).rstrip("?.! ")
+    montar = ATALHOS.get(chave)
+    return montar() if montar else None
 
 
 def sql_vendas_modelo():
@@ -223,22 +313,18 @@ LEMBRETE_PRECO = (
     "as mesmas colunas.)"
 )
 
-# A pergunta do atalho "Onde a Farmazids está mais cara" tem o SQL montado aqui, sem o Bedrock.
-PERGUNTA_FARMAZIDS_MAIS_CARA = re.compile(
-    r"^em quais produtos a farmazids esta mais cara (?:que|do que) os concorrentes\s*\??$")
-
 # "Farmazids mais cara/barata que os concorrentes" (texto sem acento): lembrete da regra abaixo.
 PERGUNTA_FARMAZIDS_X = re.compile(
     r"farmazids.*\bmais (?:cara|caro|barata|barato)s?\b.*\b(?:concorrent\w*|outras farmacias|farmacias)\b")
 LEMBRETE_FARMAZIDS_X = (
-    "\n\n(Lembrete: é a comparação Farmazids x concorrentes produto a produto. Siga a regra dela: mesmo "
-    "ean, colunas produto, preco_farmazids, menor_preco_concorrente, farmacia e diferenca, sem percentual.)"
+    "\n\n(Lembrete: é a comparação Farmazids x concorrência produto a produto. Siga a regra dela e o modelo, "
+    "com as mesmas colunas.)"
 )
 REGRA_FARMAZIDS_X_CONCORRENTES = (
-    "- Farmazids mais cara (ou mais barata) que os concorrentes: só o MESMO produto (mesmo ean), nunca "
-    "produtos diferentes, sem percentual. Colunas: produto, preco_farmazids, menor_preco_concorrente, farmacia, "
-    "diferenca (R$); maior diferença primeiro, LIMIT 20. Modelo (mais cara; mais barata: troque > por < e "
-    "ordene ASC):\n" + sql_farmazids_x_concorrentes() + "\n"
+    "- Farmazids mais cara (ou mais barata) que a concorrência: só o MESMO produto (mesmo ean), nunca produtos "
+    "diferentes; preço da Farmazids até R$ 500; diferença acima de 200% fica fora e é contada em "
+    "ignorados_acima_200. Mantenha as colunas do modelo (mais cara; mais barata usa abaixo_pct):\n"
+    + sql_farmazids_x_concorrentes() + "\n"
 )
 
 # A pergunta que o leitor de código de barras da tela manda (texto já sem acento).
@@ -375,9 +461,12 @@ def gerar(event):
     # A tela pode mandar {"modo": "rapida"} no fim do histórico (para a redigir-resposta): não é uma troca.
     historico = [t for t in (event.get("historico") or []) if not (isinstance(t, dict) and "modo" in t)]
 
-    if PERGUNTA_FARMAZIDS_MAIS_CARA.match(sem_acento(pergunta).strip()) and not erro_anterior:
-        # Pergunta do atalho "Onde a Farmazids está mais cara": o SQL sai pronto, sem Bedrock.
-        return {"sql": sql_farmazids_x_concorrentes()}
+    atalho = None if erro_anterior else sql_do_atalho(pergunta)
+    if atalho:
+        # Pergunta de um atalho da tela: o SQL sai pronto, sem Bedrock (se for reprovado, a correção
+        # volta para o caminho normal, com erro_anterior).
+        print("[tempo] etapa=atalho (sem Bedrock)")
+        return {"sql": atalho}
 
     leitor = PERGUNTA_DO_LEITOR.match(sem_acento(pergunta).strip())
     if leitor and not erro_anterior:

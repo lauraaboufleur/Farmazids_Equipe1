@@ -636,7 +636,9 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
 }
 
 /* ---------- Só no PDF ---------- */
-.so-impressao { display: none; }
+.so-impressao, .st-key-impressao-logo { display: none; }
+/* O PDF é só das respostas do chatbot: no balão da pergunta, nunca. */
+[class*="st-key-msg-"][class*="-user"] .pdf-botao { display: none !important; }
 /* Gráfico do PDF: desenhado fora da tela, já na largura da página A4 e com cores claras. */
 [class*="st-key-grafico-impressao-"] { position: absolute; left: -10000px; top: 0; width: 720px; }
 
@@ -723,6 +725,12 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
   html.imprimindo [data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] { gap: 0.5rem !important; }
   html.imprimindo [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:has(> .stHtml:empty),
   html.imprimindo [data-testid="stLayoutWrapper"]:has(> [class*="st-key-msg-"]:not(.imprimir-esta)) { display: none !important; }
+  /* Logo da Farmazids no topo do PDF (versão para fundo claro), centralizado. */
+  html.imprimindo .st-key-impressao-logo { display: flex !important; align-items: center !important; margin-bottom: 10px; }
+  html.imprimindo .st-key-impressao-logo div {
+    display: flex !important; justify-content: center !important; align-items: center !important; width: 100% !important;
+  }
+  html.imprimindo .st-key-impressao-logo img { width: 200px !important; height: auto !important; }
   html.imprimindo .imprimir-esta .so-impressao { display: block !important; }
   /* A resposta inteira, sem balão nem bordas. */
   html.imprimindo .imprimir-esta [data-testid="stChatMessage"],

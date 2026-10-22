@@ -250,6 +250,22 @@
       if (abrir) abrir.click();
       return;
     }
+    // "Comparar um remédio…": só escreve o começo da pergunta, com o cursor no fim, para a pessoa completar.
+    const escrever = alvo.closest("button[data-escrever]");
+    if (escrever) {
+      evento.preventDefault();
+      const caixa = document.querySelector('[data-testid="stChatInputTextArea"]');
+      if (!caixa || caixa.disabled) {
+        avisar("Aguarde a resposta e tente de novo.");
+        return;
+      }
+      fecharColunaNoCelular();
+      preencher(escrever.dataset.escrever + " ");  // o espaço do fim não sobrevive no atributo
+      caixa.focus();
+      const fim = caixa.value.length;
+      caixa.setSelectionRange(fim, fim);
+      return;
+    }
     const botao = alvo.closest("button[data-pergunta]");
     if (!botao) return;
     evento.preventDefault();

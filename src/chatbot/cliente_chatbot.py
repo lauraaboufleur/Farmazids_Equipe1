@@ -37,6 +37,7 @@ import os
 import re
 import threading
 import time
+import unicodedata
 import wave
 from functools import lru_cache
 
@@ -166,8 +167,63 @@ def _cliente_step_functions():
     return boto3.client("stepfunctions", region_name=REGIAO, config=config)
 
 
+def _sem_acento(texto):
+    texto = unicodedata.normalize("NFKD", texto.lower().strip().rstrip("?").strip())
+    return "".join(c for c in texto if not unicodedata.combining(c))
+
+
+# Os atalhos da coluna lateral (pela pergunta exata, como na gerar-sql), nas colunas do SQL pronto.
+_PRODUTOS = [("Dipirona Monoidratada 500mg/mL Gotas 20mL", "12.9", "7.49", "sao_joao"),
+             ("Losartana Potássica 50mg 30 Comprimidos", "25.0", "16.6", "farmaponte"),
+             ("Paracetamol 750mg 20 Comprimidos", "10.4", "8.19", "veracruz"),
+             ("Omeprazol 20mg 28 Cápsulas", "18.5", "15.9", "sao_paulo"),
+             ("Ibuprofeno 400mg 10 Cápsulas Gelatinosas Moles", "14.9", "13.2", "sao_joao"),
+             ("Amoxicilina 500mg 21 Cápsulas", "32.9", "30.1", "farmaponte"),
+             ("Sinvastatina 20mg 30 Comprimidos", "19.9", "18.9", "veracruz")]
+_ATALHOS_SIMULADOS = {
+    "em quais produtos a farmazids esta mais cara que a concorrencia": (
+        "A maior diferença é na Dipirona Monoidratada 500mg/mL Gotas 20mL: a Farmazids cobra R$ 12,90 e a São "
+        "João, R$ 7,49 (72% acima). Três produtos com diferença acima de 200% ficaram de fora, por serem "
+        "provavelmente erro de cadastro.",
+        ["produto", "farmazids_rs", "menor_concorrente_rs", "farmacia", "diferenca", "acima_pct", "ignorados_acima_200"],
+        [[n, f, c, fa, f"{float(f) - float(c):.2f}", f"{(float(f) - float(c)) / float(c) * 100:.1f}", "3"]
+         for n, f, c, fa in _PRODUTOS]),
+    "em quais produtos a farmazids esta mais barata que a concorrencia": (
+        "A Farmazids está mais barata principalmente na Atorvastatina 20mg 30 Comprimidos: R$ 29,90, contra "
+        "R$ 41,50 na FarmaPonte (28% abaixo).",
+        ["produto", "farmazids_rs", "menor_concorrente_rs", "farmacia", "diferenca", "abaixo_pct", "ignorados_acima_200"],
+        [["Atorvastatina 20mg 30 Comprimidos", "29.9", "41.5", "farmaponte", "11.6", "28.0", "1"],
+         ["Loratadina 10mg 12 Comprimidos", "9.9", "12.4", "sao_joao", "2.5", "20.2", "1"],
+         ["Dorflex 36 Comprimidos", "21.9", "24.9", "veracruz", "3.0", "12.0", "1"]]),
+    "quais os 10 produtos mais vendidos da farmazids nos ultimos 3 meses e como esta o preco deles na concorrencia": (
+        "O mais vendido foi a Dipirona Monoidratada 500mg/mL Gotas 20mL, com 412 unidades; nele a Farmazids "
+        "está 72% acima do menor preço da concorrência (São João).",
+        ["produto", "unidades", "farmazids_rs", "menor_concorrente_rs", "farmacia", "diferenca_pct"],
+        [[n, str(u), f, c, fa, f"{(float(f) - float(c)) / float(c) * 100:.1f}"]
+         for (n, f, c, fa), u in zip(_PRODUTOS, (412, 380, 351, 290, 244, 198, 150))]
+        + [["Código 7891234567895", "120", None, None, None, None]]),
+    "quantas unidades cada farmacia vendeu por mes nos ultimos 6 meses": (
+        "Em setembro de 2026, a FarmaPonte vendeu 1.320 unidades e a VeraCruz, 980.",
+        ["farmacia", "mes", "unidades"],
+        [[f, m, str(u)] for f, base in (("farmaponte", 1200), ("veracruz", 900))
+         for i, m in enumerate(("2026-04", "2026-05", "2026-06", "2026-07", "2026-08", "2026-09"))
+         for u in (base + 24 * i,)]),
+    "quais produtos da farmazids mais cairam em vendas nos ultimos 3 meses": (
+        "A maior queda foi na Losartana Potássica 50mg 30 Comprimidos: de 210 para 95 unidades (55% a menos), "
+        "e a Farmazids cobra R$ 25,00, contra R$ 16,60 na FarmaPonte.",
+        ["produto", "unidades_antes", "unidades_agora", "queda_pct", "farmazids_rs", "menor_concorrente_rs", "farmacia"],
+        [[n, str(a), str(d), f"{(a - d) / a * 100:.1f}", f, c, fa]
+         for (n, f, c, fa), (a, d) in zip(_PRODUTOS[1:5], ((210, 95), (180, 120), (88, 61), (40, 33)))]),
+}
+
+
 def _perguntar_simulado(pergunta, historico):
     time.sleep(1.5)  # imita o tempo de resposta do backend
+    atalho = _ATALHOS_SIMULADOS.get(_sem_acento(pergunta))
+    if atalho:
+        resposta, colunas, linhas = atalho
+        return {"ok": True, "resposta": resposta, "sql": "WITH fz AS (...), conc AS (...) ... (SQL pronto do atalho)",
+                "colunas": colunas, "linhas": linhas, "tipo": "dados", "grafico": None}
     contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
     pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
     if any(p in pergunta.lower() for p in ("vend", "fatur", "arrecad")):
@@ -264,17 +320,6 @@ def _perguntar_simulado(pergunta, historico):
             "grafico": {"tipo": "barras", "x": "mes", "y": ["valor_estimado"], "serie": "farmacia",
                         "pedido": True} if pediu_grafico else None,
         }
-    if "farmazids" in pergunta.lower() and "mais cara" in pergunta.lower():
-        # Atalho "Onde a Farmazids está mais cara": o mesmo produto (mesmo EAN), diferença em R$.
-        return {"ok": True, "resposta": "A maior diferença é na Dipirona Monoidratada 500mg/mL Gotas 20mL: a Farmazids "
-                "cobra R$ 12,90 e a São João, R$ 7,49. A tabela mostra os 4 produtos em que a Farmazids está mais cara.",
-                "sql": "WITH ultima AS (...) ... ORDER BY diferenca DESC LIMIT 20",
-                "colunas": ["produto", "preco_farmazids", "menor_preco_concorrente", "farmacia", "diferenca"],
-                "linhas": [["Dipirona Monoidratada 500mg/mL Gotas 20mL", "12.9", "7.49", "sao_joao", "5.41"],
-                           ["Losartana Potássica 50mg 30 Comprimidos", "25.0", "21.6", "farmaponte", "3.4"],
-                           ["Paracetamol 750mg 20 Comprimidos", "10.4", "8.99", "veracruz", "1.41"],
-                           ["Omeprazol 20mg 28 Cápsulas", "18.5", "17.9", "sao_paulo", "0.6"]],
-                "tipo": "dados", "grafico": None}
     if "diferença por unidade" in pergunta.lower():
         # Colunas cruas, para conferir os rótulos e os números formatados na tabela.
         return {"ok": True, "resposta": "A maior diferença por unidade é na Dipirona injetável.", "sql": "SELECT ...",
