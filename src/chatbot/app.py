@@ -40,6 +40,10 @@ COLUNAS_TEXTO = {"ean", "ean_gtin", "sku", "id_venda"}
 NOMES_COLUNAS = {
     "farmacia": "Farmácia",
     "nome": "Produto",
+    "produto": "Produto",
+    "preco_farmazids": "Preço Farmazids",
+    "menor_preco_concorrente": "Menor preço concorrente",
+    "diferenca": "Diferença (R$)",
     "marca": "Marca",
     "ean": "EAN",
     "sku": "SKU",
@@ -109,6 +113,17 @@ NOMES_UNIDADES_FORMAS = {
 LARGURAS = {"Produto": st.column_config.Column(width=300),
             "Estoque": st.column_config.TextColumn(width=74, alignment="center"),
             "Coleta": st.column_config.Column(width=100)}
+
+
+def larguras(colunas):
+    """Com 5 colunas ou mais, cada coluna ganha uma largura fixa (o produto, mais estreito), para
+    todas caberem sem rolar para o lado, inclusive a última (ex.: "Diferença (R$)"). O cabeçalho
+    comprido aparece abreviado; o nome inteiro fica na dica do mouse."""
+    if len(colunas) < 5:
+        return LARGURAS
+    fixas = {nome_coluna(c): st.column_config.Column(width=120) for c in colunas}
+    return {**fixas, **LARGURAS, "Produto": st.column_config.Column(width=180),
+            "Farmácia": st.column_config.Column(width=140)}
 
 # Como sim/não aparece na tabela (ex.: coluna Estoque).
 MARCAS = {"true": "✓", "false": "✗"}
@@ -257,10 +272,8 @@ BOTAO_EAN = "<button type='button' class='ean-botao' title='Ler código de barra
 # Abre a coluna de atalhos quando ela está recolhida (celular). O assets/voz.js cuida do clique.
 BOTAO_MENU = "<button type='button' class='menu-botao' title='Atalhos' aria-label='Abrir os atalhos'>☰</button>"
 
-# ---------- Atalhos (coluna lateral e chips) ----------
+# ---------- Atalhos (coluna lateral) ----------
 # Para mudar os atalhos, é só editar aqui: (grupo, [(rótulo do botão, pergunta enviada)]).
-# Pergunta LEITOR abre o leitor de código de barras em vez de mandar pergunta.
-LEITOR = None
 ATALHOS = [
     ("Preços", [
         ("Dipirona 1g mais barata", "Qual farmácia tem a dipirona 1g mais barata?"),
@@ -274,15 +287,7 @@ ATALHOS = [
         ("Mais vendidos da Farmazids", "Quais os 10 produtos mais vendidos pela Farmazids em 2026?"),
         ("Vendas por mês", "Vendas de cada farmácia por mês no 1º semestre de 2026"),
     ]),
-    ("Remédios", [
-        ("Para que serve", "Para que serve a losartana?"),
-    ]),
-    ("Código de barras", [
-        ("Ler código de barras", LEITOR),
-    ]),
 ]
-# Os 4 que aparecem como chips acima da caixa de pergunta, com a conversa vazia (pelos rótulos).
-CHIPS = ["Dipirona 1g mais barata", "Comparar paracetamol 750mg", "Mais vendidos da Farmazids", "Para que serve"]
 # Seletor de modo junto da caixa de pergunta: rótulo -> modo enviado ao backend.
 MODOS = {"⚡ Rápida": "rapida", "Completa": "completa"}
 MODO_PADRAO = "Completa"
@@ -369,6 +374,20 @@ def inteiro_br(valor):
     return f"{int(valor):,}".replace(",", ".")
 
 
+def decimal_br(valor):
+    """100.38 -> "100,38"; 1234.5 -> "1.234,50" (nunca 100.380000)."""
+    if vazio(valor):
+        return VAZIO
+    return f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def percentual_br(valor):
+    """12.345 -> "12,3%"."""
+    if vazio(valor):
+        return VAZIO
+    return f"{valor:,.1f}%".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
 def data_br(valor):
     """"2026-10-16" -> "16/10/2026". Se não for uma data nesse formato, fica como veio."""
     if vazio(valor):
@@ -386,13 +405,29 @@ def unidade_unica(colunas, linhas):
     return unidades.pop() if len(unidades) == 1 else None
 
 
+# Palavras dos nomes de coluna com o acento de volta, para qualquer coluna fora do NOMES_COLUNAS
+# ("diferenca_por_unidade" -> "Diferença por unidade").
+ACENTOS_COLUNAS = {
+    "preco": "preço", "precos": "preços", "diferenca": "diferença", "farmacia": "farmácia",
+    "farmacias": "farmácias", "concentracao": "concentração", "medio": "médio", "media": "média",
+    "minimo": "mínimo", "maximo": "máximo", "mes": "mês", "meses": "meses", "codigo": "código",
+    "unitario": "unitário", "comparacao": "comparação", "cartao": "cartão", "ultima": "última",
+    "ultimo": "último", "numero": "número", "variacao": "variação", "descricao": "descrição",
+    "posicao": "posição", "promocao": "promoção", "periodo": "período", "economia": "economia",
+    "pix": "Pix", "ean": "EAN", "sku": "SKU", "farmazids": "Farmazids", "pct": "%",
+}
+
+
 def nome_coluna(coluna, unidade=None):
     """unidade: a unidade de todas as linhas (ex.: "comprimido"), para o cabeçalho do preço por unidade."""
     por_unidade = PRECO_POR_UNIDADE.match(coluna.lower())
     if por_unidade:
         inicio = TIPOS_PRECO.get(por_unidade.group(1), "Por")
         return f"{inicio} {NOMES_UNIDADES_FORMAS.get(unidade, unidade) if unidade else 'unidade'}"
-    return NOMES_COLUNAS.get(coluna.lower(), coluna.replace("_", " ").capitalize())
+    if coluna.lower() in NOMES_COLUNAS:
+        return NOMES_COLUNAS[coluna.lower()]
+    texto = " ".join(ACENTOS_COLUNAS.get(p, p) for p in coluna.lower().split("_") if p)
+    return texto[:1].upper() + texto[1:]
 
 
 def montar_tabela(colunas, linhas):
@@ -446,12 +481,14 @@ def montar_tabela(colunas, linhas):
             continue
         if PRECO_POR_UNIDADE.match(chave):
             funcao = em_reais_unidade
+        elif "percent" in chave or chave.startswith("pct") or chave.endswith("pct"):
+            funcao = percentual_br
         elif em_dinheiro(chave):
             funcao = em_reais
         elif (convertida.dropna() % 1 == 0).all():
             funcao = inteiro_br
         else:
-            funcao = None
+            funcao = decimal_br  # número com casas: sempre "100,38", nunca "100.380000"
 
         if convertida.isna().any():
             # O Streamlit escreve "None" em célula numérica vazia, sem respeitar o
@@ -488,7 +525,8 @@ CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades"}
 
 def em_dinheiro(coluna):
     coluna = coluna.lower()
-    return coluna not in CONTAGENS and ("preco" in coluna or "valor" in coluna)
+    return coluna not in CONTAGENS and "percent" not in coluna and (
+        "preco" in coluna or "valor" in coluna or coluna.startswith("diferenca"))
 
 
 def rotulo_menor(rotulo):
@@ -1460,7 +1498,7 @@ def mostrar(mensagem, chave):
                     if aviso:
                         st.html(aviso)
                     st.dataframe(montar_tabela(mensagem["colunas"], mensagem["linhas"]), hide_index=True,
-                                 width="stretch", column_config=LARGURAS)
+                                 width="stretch", column_config=larguras(mensagem["colunas"]))
             # Com zero linhas não há tabela nem gráfico (nada de tabela vazia com "empty").
             elif mensagem.get("colunas") and mensagem.get("linhas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
@@ -1469,9 +1507,9 @@ def mostrar(mensagem, chave):
                     total = comparacao["total"]
                     with st.expander(f"Ver tabela completa ({total} produto{'s' if total != 1 else ''})",
                                      key=f"tabela-{chave}"):
-                        st.dataframe(tabela, hide_index=True, width="stretch", column_config=LARGURAS)
+                        st.dataframe(tabela, hide_index=True, width="stretch", column_config=larguras(mensagem["colunas"]))
                 else:
-                    st.dataframe(tabela, hide_index=True, width="stretch", column_config=LARGURAS)
+                    st.dataframe(tabela, hide_index=True, width="stretch", column_config=larguras(mensagem["colunas"]))
                 # Gráfico só quando a pergunta pediu; aí ele já aparece aberto.
                 grafico = montar_grafico(so_grupo_principal(mensagem, comparacao)) \
                     if mensagem.get("pediu_grafico") else None
@@ -1515,10 +1553,10 @@ def montar_historico(mensagens):
     return trocas[-TROCAS_NO_HISTORICO:]
 
 
-def html_atalho(rotulo, pergunta, classe="atalho-botao"):
-    """Botão que manda a pergunta pela caixa (assets/voz.js), ou abre o leitor (assets/leitor_ean.js)."""
-    acao = "data-abrir-leitor='1'" if pergunta is LEITOR else f"data-pergunta='{html.escape(pergunta, quote=True)}'"
-    return f"<button type='button' class='{classe}' {acao}>{html.escape(rotulo)}</button>"
+def html_atalho(rotulo, pergunta):
+    """Botão que manda a pergunta pela caixa (assets/voz.js), como se a pessoa tivesse digitado."""
+    return (f"<button type='button' class='atalho-botao' data-pergunta='{html.escape(pergunta, quote=True)}'>"
+            f"{html.escape(rotulo)}</button>")
 
 
 def nova_conversa():
@@ -1543,12 +1581,10 @@ def desenhar_coluna_lateral():
 
 
 def desenhar_rodape_da_caixa():
-    """Logo acima da caixa de pergunta: os chips (só com a conversa vazia) e o seletor de modo."""
+    """Logo acima da caixa de pergunta: o seletor de modo. O rodapé tem sempre os mesmos
+    elementos, na mesma ordem: se algo aparecer só às vezes, enquanto a resposta é processada
+    o Streamlit mostra a versão antiga e a nova juntas (duas caixas de pergunta)."""
     with st._bottom:
-        if not st.session_state.mensagens and st.session_state.pendente is None:
-            atalhos = {rotulo: pergunta for _, itens in ATALHOS for rotulo, pergunta in itens}
-            st.html("<div class='chips' role='group' aria-label='Sugestões'>"
-                    + "".join(html_atalho(r, atalhos[r], "chip") for r in CHIPS if r in atalhos) + "</div>")
         with st.container(key="modo-resposta"):
             st.segmented_control(
                 "Modo de resposta", list(MODOS), key="modo_escolha", on_change=escolher_modo,

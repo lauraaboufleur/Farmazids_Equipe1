@@ -218,6 +218,53 @@ LEMBRETE_PRECO = (
     "modelo de comparação, com as mesmas colunas.)"
 )
 
+# Farmazids x concorrentes, produto a produto: só o MESMO produto (mesmo EAN, sem zeros à esquerda).
+# A pergunta do atalho da tela tem o SQL montado aqui, sem o Bedrock; outras perguntas parecidas
+# seguem a regra do prompt, com o mesmo modelo.
+PERGUNTA_FARMAZIDS_MAIS_CARA = re.compile(
+    r"^em quais produtos a farmazids esta mais cara (?:que|do que) os concorrentes\s*\??$")
+
+
+def sql_farmazids_x_concorrentes(mais_cara=True):
+    """Produto, preço Farmazids, menor preço concorrente (coleta mais recente de cada farmácia,
+    preço de comparação), farmácia e diferença em R$ (sem percentual), pela maior diferença."""
+    filtro, ordem = ("f.preco_farmazids > m.menor_preco_concorrente", "diferenca DESC") if mais_cara \
+        else ("f.preco_farmazids < m.menor_preco_concorrente", "diferenca ASC")
+    return (
+        "WITH ultima AS (SELECT farmacia, max(date(data_coleta)) AS dia FROM vw_precos_unitarios GROUP BY farmacia), "
+        "concorrentes AS (SELECT regexp_replace(trim(CAST(u.ean AS varchar)), '^0+', '') AS ean_n, u.farmacia, "
+        "u.preco_comparacao AS preco FROM vw_precos_unitarios u "
+        "JOIN ultima ON ultima.farmacia = u.farmacia AND date(u.data_coleta) = ultima.dia "
+        "WHERE u.ean IS NOT NULL AND u.preco_comparacao IS NOT NULL), "
+        "menor AS (SELECT ean_n, min(preco) AS menor_preco_concorrente, min_by(farmacia, preco) AS farmacia "
+        "FROM concorrentes GROUP BY ean_n), "
+        "farmazids AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS produto, "
+        "min(TRY_CAST(preco_farmazids AS double)) AS preco_farmazids FROM vw_precos_unitarios_farmazids "
+        "WHERE ean IS NOT NULL GROUP BY 1) "
+        "SELECT f.produto, f.preco_farmazids, m.menor_preco_concorrente, m.farmacia, "
+        "round(f.preco_farmazids - m.menor_preco_concorrente, 2) AS diferenca "
+        "FROM farmazids f JOIN menor m ON m.ean_n = f.ean_n "
+        f"WHERE {filtro} ORDER BY {ordem} LIMIT 20"
+    )
+
+
+# "Farmazids mais cara/barata que os concorrentes" (texto sem acento): lembrete da regra abaixo.
+PERGUNTA_FARMAZIDS_X = re.compile(
+    r"farmazids.*\bmais (?:cara|caro|barata|barato)s?\b.*\b(?:concorrent\w*|outras farmacias|farmacias)\b")
+LEMBRETE_FARMAZIDS_X = (
+    "\n\n(Lembrete: é a comparação Farmazids x concorrentes produto a produto. Siga a regra dela: mesmo "
+    "ean, colunas produto, preco_farmazids, menor_preco_concorrente, farmacia e diferenca, sem percentual.)"
+)
+REGRA_FARMAZIDS_X_CONCORRENTES = (
+    "- Farmazids mais cara (ou mais barata) que os concorrentes, produto a produto: compare só o MESMO "
+    "produto, pelo ean sem zeros à esquerda, entre vw_precos_unitarios_farmazids e a coleta mais recente "
+    "de cada farmácia na vw_precos_unitarios (preço de comparação). Nunca compare produtos diferentes "
+    "(ex.: suspensão oral com injetável) nem traga diferença percentual. Colunas, com estes nomes: "
+    "produto, preco_farmazids, menor_preco_concorrente, farmacia, diferenca (em R$). Ordene pela maior "
+    "diferença, LIMIT 20. Modelo (mais cara; para mais barata, troque > por < e ordene por diferenca "
+    f"ASC):\n{sql_farmazids_x_concorrentes()}\n"
+)
+
 # A pergunta que o leitor de código de barras da tela manda (texto já sem acento).
 PERGUNTA_DO_LEITOR = re.compile(r"^compare os precos do produto com codigo de barras (\d{8}|\d{13})\s*\??$")
 
@@ -293,6 +340,7 @@ def system_prompt():
         "os produtos encontrados em cada coleta, e min_by(preco_comparacao_origem, preco_comparacao) AS "
         "origem_preco.\n"
         f"{REGRA_COMPARACAO}"
+        f"{REGRA_FARMAZIDS_X_CONCORRENTES}"
         f"{REGRA_VENDAS}"
         "- Responda APENAS com o SQL, sem explicações e sem blocos de código.\n"
         "- Se vier uma conversa anterior e a pergunta atual for uma continuação (ex.: 'e na São João?', "
@@ -356,6 +404,10 @@ def lambda_handler(event, context):
     # A tela pode mandar {"modo": "rapida"} no fim do histórico (para a redigir-resposta): não é uma troca.
     historico = [t for t in (event.get("historico") or []) if not (isinstance(t, dict) and "modo" in t)]
 
+    if PERGUNTA_FARMAZIDS_MAIS_CARA.match(sem_acento(pergunta).strip()) and not erro_anterior:
+        # Pergunta do atalho "Onde a Farmazids está mais cara": o SQL sai pronto, sem Bedrock.
+        return {"sql": sql_farmazids_x_concorrentes()}
+
     leitor = PERGUNTA_DO_LEITOR.match(sem_acento(pergunta).strip())
     if leitor and not erro_anterior:
         # Pergunta do leitor de código de barras: o SQL sai pronto, sem Bedrock (mais rápido e barato).
@@ -374,6 +426,8 @@ def lambda_handler(event, context):
         mensagem += LEMBRETE_VENDAS
         if fora:
             mensagem += LEMBRETE_SO_COM_VENDAS.format(fora=" nem ".join(fora), dentro=", ".join(dentro))
+    elif PERGUNTA_FARMAZIDS_X.search(sem_acento(pergunta)):
+        mensagem += LEMBRETE_FARMAZIDS_X
     elif eh_pergunta_de_preco(pergunta):
         mensagem += LEMBRETE_PRECO
     ean = EAN_NA_PERGUNTA.search(pergunta)

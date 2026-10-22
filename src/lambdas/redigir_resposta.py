@@ -41,7 +41,12 @@ bedrock = boto3.client(
 SYSTEM = (
     "Você é o assistente de dados da Farmazids. Responda em português, de forma clara e curta, "
     "usando somente os dados fornecidos. Se o resultado estiver vazio, diga que não foram encontrados "
-    "dados. Não invente números. O usuário também verá a tabela completa, então não a repita inteira.\n\n"
+    "dados. Não invente números. O usuário também verá a tabela completa, então não a repita inteira.\n"
+    "Escreva em português natural: nunca nomes de colunas nem campos crus (ex.: 'concentracao: 200mg/ml; "
+    "forma: injetavel', 'preco_farmazids'); diga 'o preço da Farmazids', '200 mg/ml', 'injetável'. Valores "
+    "em reais sempre como R$ 1.234,56; nunca números crus como 100.380000.\n"
+    "Farmazids x concorrentes (colunas preco_farmazids, menor_preco_concorrente e diferenca): é o mesmo "
+    "produto nas duas pontas. Diga em 1 ou 2 frases onde a diferença é maior, em reais, sem percentual.\n\n"
     "Nomes das farmácias: nos dados elas podem aparecer como códigos. Na resposta, escreva sempre "
     "exatamente assim: FarmaPonte, VeraCruz, São João, Drogaria São Paulo e Farmazids (nunca Farmaponte, "
     "Vera Cruz, São Paulo sozinho nem os códigos como sao_joao).\n"
@@ -119,6 +124,12 @@ GRAFICO = {
 NOMES_FARMACIAS = {"farmaponte": "FarmaPonte", "veracruz": "VeraCruz", "sao_joao": "São João",
                    "sao_paulo": "Drogaria São Paulo", "farmazids": "Farmazids"}
 CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades", "vendas_codigo_sem_cadastro"}
+# Palavras dos nomes de coluna com o acento de volta ("diferenca_por_unidade" -> "diferença por unidade").
+ACENTOS = {"preco": "preço", "precos": "preços", "diferenca": "diferença", "farmacia": "farmácia",
+           "farmacias": "farmácias", "concentracao": "concentração", "medio": "médio", "media": "média",
+           "minimo": "mínimo", "maximo": "máximo", "mes": "mês", "codigo": "código", "unitario": "unitário",
+           "comparacao": "comparação", "cartao": "cartão", "ultima": "última", "ultimo": "último",
+           "numero": "número", "variacao": "variação", "pix": "Pix", "ean": "EAN", "farmazids": "Farmazids"}
 
 
 def separar_modo(historico):
@@ -145,7 +156,13 @@ def inteiro(valor):
 
 
 def em_dinheiro(coluna):
-    return coluna not in CONTAGENS and ("preco" in coluna or "valor" in coluna)
+    return coluna not in CONTAGENS and "percent" not in coluna and (
+        "preco" in coluna or "valor" in coluna or coluna.startswith("diferenca"))
+
+
+def rotulo(coluna):
+    """"menor_preco_concorrente" -> "menor preço concorrente"."""
+    return " ".join(ACENTOS.get(p, p) for p in coluna.lower().split("_"))
 
 
 def farmacia(valor):
@@ -174,6 +191,17 @@ def frase_rapida(colunas, linhas):
         estimado = sum(numero(valor(l, "valor_estimado")) or 0 for l in linhas)
         frase = f"Foram {inteiro(total)} {'venda' if total == 1 else 'vendas'}"
         return frase + (f", com valor estimado de {reais(estimado)} (preços atuais)." if estimado else ".")
+
+    # Farmazids x concorrentes, o mesmo produto: a maior diferença em reais.
+    if {"preco_farmazids", "menor_preco_concorrente", "diferenca"} <= set(indice):
+        primeira = max(linhas, key=lambda l: abs(numero(valor(l, "diferenca")) or 0))
+        dif = numero(valor(primeira, "diferenca")) or 0
+        quem = farmacia(valor(primeira, "farmacia"))
+        frase = (f"A maior diferença é em {valor(primeira, 'produto') or 'um produto'}: a Farmazids cobra "
+                 f"{reais(numero(valor(primeira, 'preco_farmazids')))} e a {quem}, "
+                 f"{reais(numero(valor(primeira, 'menor_preco_concorrente')))} ({reais(abs(dif))} "
+                 f"{'a menos' if dif > 0 else 'a mais'}).")
+        return frase + f" São {inteiro(len(linhas))} produtos na lista."
 
     # Comparação por unidade: o mais barato na apresentação vendida pelo maior número de farmácias.
     por_unidade = next((n for n in nomes if PRECO_POR_UNIDADE.search(n)), None)
@@ -207,19 +235,28 @@ def frase_rapida(colunas, linhas):
             onde = f", na {farmacia(valor(melhor, 'farmacia'))}" if "farmacia" in indice else ""
             return f"Na coleta de {data_br(ultima)}, o menor preço foi {reais(numero(valor(melhor, preco)))}{onde}."
 
-    # Qualquer outro resultado: a primeira linha e quantas há.
+    # Qualquer outro resultado: em português, o primeiro item e o número principal dele (nada de
+    # "campo: valor" cru).
     def mostrar(nome, bruto):
         n = numero(bruto)
-        if n is None:
-            return farmacia(bruto) if nome == "farmacia" else str(bruto)
-        return reais(n) if em_dinheiro(nome) else (inteiro(n) if n == int(n) else f"{n:.2f}".replace(".", ","))
+        return reais(n) if em_dinheiro(nome) else (inteiro(n) if n == int(n) else f"{n:,.2f}".replace(
+            ",", "X").replace(".", ",").replace("X", "."))
 
     primeira = linhas[0]
-    partes = [f"{c.replace('_', ' ')}: {mostrar(c, primeira[i])}" for i, c in enumerate(nomes[:3])
-              if i < len(primeira) and primeira[i] not in (None, "")]
+    texto = next((farmacia(primeira[i]) if c == "farmacia" else str(primeira[i])
+                  for i, c in enumerate(nomes) if i < len(primeira) and primeira[i] not in (None, "")
+                  and numero(primeira[i]) is None and c not in ("concentracao", "forma", "unidade")), None)
+    valor_principal = next(((c, primeira[i]) for i, c in enumerate(nomes)
+                            if i < len(primeira) and numero(primeira[i]) is not None), None)
+    numero_txt = f"{rotulo(valor_principal[0])} de {mostrar(*valor_principal)}" if valor_principal else ""
     if len(linhas) == 1:
-        return "Resultado: " + "; ".join(partes) + "."
-    return f"São {inteiro(len(linhas))} resultados. O primeiro: " + "; ".join(partes) + "."
+        if texto and numero_txt:
+            return f"{texto}: {numero_txt}."
+        return f"O resultado é {texto or mostrar(*valor_principal)}." if (texto or valor_principal) else "Pronto."
+    inicio = f"São {inteiro(len(linhas))} resultados."
+    if texto:
+        return f"{inicio} O primeiro é {texto}" + (f", com {numero_txt}." if numero_txt else ".")
+    return inicio + (f" O primeiro tem {numero_txt}." if numero_txt else "")
 
 
 def ferramenta(com_grafico, com_fala):

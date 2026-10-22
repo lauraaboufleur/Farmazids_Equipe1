@@ -293,8 +293,7 @@
   }
 
   document.addEventListener("click", (evento) => {
-    // O botão do cabeçalho e o atalho "Ler código de barras" da coluna lateral.
-    const botao = evento.target.closest && evento.target.closest(".ean-botao, [data-abrir-leitor]");
+    const botao = evento.target.closest && evento.target.closest(".ean-botao");
     if (!botao) return;
     evento.preventDefault();
     abrirJanela();

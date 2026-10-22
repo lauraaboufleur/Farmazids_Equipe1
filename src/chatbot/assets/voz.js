@@ -9,7 +9,7 @@
 //   voz escolhida pela tabela de prioridade do app.py (VOZ).
 // Também expõe perguntar(texto) e avisar(texto) em window.farmazidsVoz, para o leitor de
 // código de barras (assets/leitor_ean.js) usar o mesmo caminho, e cuida dos botões com uma
-// pergunta pronta (atalhos, chips, oferta) e do ☰ que abre a coluna de atalhos.
+// pergunta pronta (atalhos e oferta) e do ☰ que abre a coluna de atalhos.
 // O app.py carrega este arquivo a cada execução e troca __CONFIG__ pela configuração
 // da voz (VOZ, no app.py). Ele só se instala uma vez por página.
 (function () {
@@ -230,8 +230,8 @@
   };
   estado.avisar = avisar;
 
-  // Botões que mandam uma pergunta pronta pelo mesmo caminho: atalhos da coluna lateral, chips
-  // acima da caixa e a oferta da resposta ("Ver preços de dipirona na São João").
+  // Botões que mandam uma pergunta pronta pelo mesmo caminho: atalhos da coluna lateral e a
+  // oferta da resposta ("Ver preços de dipirona na São João").
   function fecharColunaNoCelular() {
     const coluna = document.querySelector('[data-testid="stSidebar"]');
     const fechar = document.querySelector('[data-testid="stSidebarCollapseButton"] button');
@@ -246,10 +246,6 @@
       evento.preventDefault();
       const abrir = document.querySelector('[data-testid="stExpandSidebarButton"]');
       if (abrir) abrir.click();
-      return;
-    }
-    if (alvo.closest("[data-abrir-leitor]")) {
-      fecharColunaNoCelular(); // o leitor (leitor_ean.js) abre por cima
       return;
     }
     const botao = alvo.closest("button[data-pergunta]");

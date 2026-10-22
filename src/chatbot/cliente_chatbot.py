@@ -264,6 +264,24 @@ def _perguntar_simulado(pergunta, historico):
             "grafico": {"tipo": "barras", "x": "mes", "y": ["valor_estimado"], "serie": "farmacia",
                         "pedido": True} if pediu_grafico else None,
         }
+    if "farmazids" in pergunta.lower() and "mais cara" in pergunta.lower():
+        # Atalho "Onde a Farmazids está mais cara": o mesmo produto (mesmo EAN), diferença em R$.
+        return {"ok": True, "resposta": "A maior diferença é na Dipirona Monoidratada 500mg/mL Gotas 20mL: a Farmazids "
+                "cobra R$ 12,90 e a São João, R$ 7,49. A tabela mostra os 4 produtos em que a Farmazids está mais cara.",
+                "sql": "WITH ultima AS (...) ... ORDER BY diferenca DESC LIMIT 20",
+                "colunas": ["produto", "preco_farmazids", "menor_preco_concorrente", "farmacia", "diferenca"],
+                "linhas": [["Dipirona Monoidratada 500mg/mL Gotas 20mL", "12.9", "7.49", "sao_joao", "5.41"],
+                           ["Losartana Potássica 50mg 30 Comprimidos", "25.0", "21.6", "farmaponte", "3.4"],
+                           ["Paracetamol 750mg 20 Comprimidos", "10.4", "8.99", "veracruz", "1.41"],
+                           ["Omeprazol 20mg 28 Cápsulas", "18.5", "17.9", "sao_paulo", "0.6"]],
+                "tipo": "dados", "grafico": None}
+    if "diferença por unidade" in pergunta.lower():
+        # Colunas cruas, para conferir os rótulos e os números formatados na tabela.
+        return {"ok": True, "resposta": "A maior diferença por unidade é na Dipirona injetável.", "sql": "SELECT ...",
+                "colunas": ["nome", "concentracao", "forma", "diferenca_por_unidade", "desconto_percentual", "preco_medio"],
+                "linhas": [["Dipirona Injetável 2mL", "500mg/ml", "injetavel", "100.380000", "12.345", "15.5"],
+                           ["Dipirona Gotas 20mL", "500mg/ml", "gotas", "0.250000", "3.1", "9.99"]],
+                "tipo": "dados", "grafico": None}
     codigo = re.search(r"código de barras (\d{13}|\d{8})(?!\d)", pergunta)
     if codigo and codigo.group(1) != "7891058017392":
         # Leitor de código de barras, código válido que não está em nenhuma farmácia: resultado vazio

@@ -41,7 +41,7 @@
   --ean-borda: #E3D3B0;
   --ean-texto: var(--roxo);
   --ean-erro: #B5533C;
-  /* Coluna de atalhos e chips */
+  /* Coluna de atalhos */
   --lateral-fundo: #F5EDDF;
   --lateral-botao: #FFFDF8;
   --lateral-borda: #E3D3B0;
@@ -558,7 +558,7 @@ html.ean-aberto, html.ean-aberto body { overflow: hidden; }
   color: var(--texto-assistente); font: inherit; font-size: 14px; line-height: 1.35;
 }
 .atalho-botao:hover, .atalho-botao:focus-visible { border-color: var(--dourado); background: var(--balao-usuario); }
-.atalho-botao:focus-visible, .chip:focus-visible, .menu-botao:focus-visible { outline: 2px solid var(--dourado); outline-offset: 2px; }
+.atalho-botao:focus-visible, .menu-botao:focus-visible { outline: 2px solid var(--dourado); outline-offset: 2px; }
 .lateral-rodape {
   margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--lateral-borda);
   font-size: 12px; line-height: 1.6; color: var(--cor-hora);
@@ -578,18 +578,7 @@ html.ean-aberto, html.ean-aberto body { overflow: hidden; }
 body:has([data-testid="stSidebar"][aria-expanded="true"]) .menu-botao,
 body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
 
-/* ---------- Acima da caixa de pergunta: chips (conversa vazia) e o modo de resposta ---------- */
-.chips {
-  display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 4px;
-  scrollbar-width: none; -webkit-overflow-scrolling: touch;
-}
-.chips::-webkit-scrollbar { display: none; }
-.chip {
-  flex: 0 0 auto; white-space: nowrap; padding: 6px 14px; cursor: pointer;
-  border-radius: 999px; border: 1px solid var(--borda-usuario); background: var(--fundo-caixa);
-  color: var(--texto-assistente); font: inherit; font-size: 13px;
-}
-.chip:hover { background: var(--balao-usuario); border-color: var(--dourado); }
+/* ---------- Acima da caixa de pergunta: o modo de resposta ---------- */
 .st-key-modo-resposta { margin-bottom: -6px; }
 /* !important: o estilo do Streamlit para o botão do seletor é mais específico que estes. */
 .st-key-modo-resposta button {
