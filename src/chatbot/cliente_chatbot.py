@@ -8,7 +8,9 @@ Dois modos:
 Configuração por variáveis de ambiente (nada de credencial no código):
 - CHATBOT_MODO_SIMULADO = "1" (simulado) ou "0" (real)
 - CHATBOT_STATE_MACHINE_ARN = ARN da máquina Expressa
-- CHATBOT_CACHE_MINUTOS = por quantos minutos guardar uma resposta (padrão 30; 0 desliga)
+- CHATBOT_CACHE_HORAS = por quantas horas, no máximo, guardar uma resposta (padrão 24; 0 desliga).
+  Antes disso, a resposta sai do cache assim que chega uma coleta nova (data lida do S3).
+- CHATBOT_BUCKET = bucket da coleta (padrão farmazids-t1-equipe1), para saber a data da última
 - CHATBOT_POLLY_SIMULADO = no modo simulado, "ok" (padrão: um áudio de teste) ou "falha"
   (finge que o Polly falhou, para testar a volta para a voz do navegador)
 
@@ -16,9 +18,13 @@ Dois cuidados com o tempo de resposta:
 - o cliente do boto3 é criado uma vez só e reaproveitado. Criar um novo a cada
   pergunta obriga a abrir outra conexão com a AWS, o que custa alguns décimos
   de segundo toda vez;
-- respostas certas ficam guardadas por alguns minutos. Se alguém repetir a
-  mesma pergunta, ela volta na hora, sem chamar Bedrock e Athena de novo.
-  Como a coleta só roda a cada dois dias, isso não deixa os dados velhos.
+- respostas certas ficam guardadas até a próxima coleta (ou 24 h). Se alguém
+  repetir a mesma pergunta, ela volta na hora, sem chamar Bedrock e Athena de novo.
+  Os dados só mudam quando chega uma coleta nova, então isso não deixa os dados velhos.
+
+Modo rápido: a máquina só repassa pergunta, historico, colunas e linhas. Então o modo vai
+como último item do histórico ({"modo": "rapida"}); a redigir-resposta o lê e monta a
+frase sem Bedrock (as outras Lambdas ignoram esse item).
 
 Memória da conversa: junto com a pergunta vai o histórico das últimas trocas
 (pergunta, resposta resumida e SQL usado), montado pela tela. O SQL serve só
@@ -38,7 +44,9 @@ REGIAO = "us-east-2"
 ARN_MAQUINA = os.environ.get("CHATBOT_STATE_MACHINE_ARN", "")
 MODO_SIMULADO = os.environ.get("CHATBOT_MODO_SIMULADO", "1") == "1"
 TAMANHO_MAXIMO_PERGUNTA = 500
-CACHE_SEGUNDOS = int(os.environ.get("CHATBOT_CACHE_MINUTOS", "30")) * 60
+CACHE_SEGUNDOS = int(os.environ.get("CHATBOT_CACHE_HORAS", "24")) * 3600
+BUCKET = os.environ.get("CHATBOT_BUCKET", "farmazids-t1-equipe1")
+COLETA_SEGUNDOS = 600  # de quanto em quanto tempo conferir no S3 se chegou coleta nova
 CACHE_MAXIMO = 200  # quantas perguntas guardar, no máximo
 
 # Os nomes vêm dos estados Fail da máquina (Error de cada um).
@@ -71,39 +79,77 @@ def _normalizar(pergunta):
     return " ".join(pergunta.lower().split()).rstrip("?!. ")
 
 
-def _chave_cache(pergunta, historico):
+def _chave_cache(pergunta, historico, modo):
     """A mesma pergunta pode ter respostas diferentes conforme a conversa:
     "e na São João?" depois de dipirona não é o mesmo que depois de amoxicilina.
-    Por isso a chave leva também as perguntas e os SQLs anteriores. Sem
-    histórico, a chave é só a pergunta, como antes."""
+    Por isso a chave leva também as perguntas e os SQLs anteriores, e o modo
+    (a resposta rápida é outra)."""
     partes = [_normalizar(troca["pergunta"]) + "\n" + " ".join((troca.get("sql") or "").lower().split())
               for troca in historico]
-    return "\n--\n".join(partes + [_normalizar(pergunta)])
+    return "\n--\n".join([modo] + partes + [_normalizar(pergunta)])
+
+
+_coleta = {"data": None, "conferida": 0.0}
+
+
+def ultima_coleta():
+    """Data ("2026-10-21") da coleta mais recente no S3 (pastas processed/<farmácia>/dt=...),
+    conferida no máximo a cada COLETA_SEGUNDOS. None se não der para ler (sem permissão
+    s3:ListBucket, por exemplo): aí o cache vale só pelas 24 h."""
+    if MODO_SIMULADO:
+        return "2026-10-21"
+    if time.time() - _coleta["conferida"] < COLETA_SEGUNDOS:
+        return _coleta["data"]
+    _coleta["conferida"] = time.time()
+    try:
+        datas = set()
+        for pagina in _cliente_s3().get_paginator("list_objects_v2").paginate(Bucket=BUCKET, Prefix="processed/"):
+            for objeto in pagina.get("Contents", []):
+                achado = re.search(r"/dt=(\d{4}-\d{2}-\d{2})/", objeto["Key"])
+                if achado:
+                    datas.add(achado.group(1))
+        _coleta["data"] = max(datas) if datas else None
+    except Exception as erro:  # sem permissão ou sem rede: segue sem a data
+        print(f"[chatbot] não li a data da coleta no S3: {erro}")
+        _coleta["data"] = None
+    return _coleta["data"]
 
 
 def _buscar_no_cache(chave):
     if CACHE_SEGUNDOS <= 0:
         return None
+    coleta = ultima_coleta()
     with _trava_cache:
         guardado = _cache.get(chave)
         if guardado is None:
             return None
-        momento, resultado = guardado
-        if time.time() - momento > CACHE_SEGUNDOS:
+        momento, coleta_da_resposta, resultado = guardado
+        # Sai do cache depois de 24 h ou quando chega uma coleta nova.
+        if time.time() - momento > CACHE_SEGUNDOS or (coleta and coleta != coleta_da_resposta):
             del _cache[chave]
             return None
         return dict(resultado)
 
 
 def _guardar_no_cache(chave, resultado):
-    # Só guarda resposta certa: erro não pode ficar "preso" por 30 minutos.
+    # Só guarda resposta certa: erro não pode ficar "preso" no cache.
     if CACHE_SEGUNDOS <= 0 or not resultado["ok"]:
         return
+    coleta = ultima_coleta()
     with _trava_cache:
         if len(_cache) >= CACHE_MAXIMO:
             mais_antiga = min(_cache, key=lambda k: _cache[k][0])
             del _cache[mais_antiga]
-        _cache[chave] = (time.time(), dict(resultado))
+        _cache[chave] = (time.time(), coleta, dict(resultado))
+
+
+@lru_cache(maxsize=1)
+def _cliente_s3():
+    import boto3
+    from botocore.config import Config
+
+    return boto3.client("s3", region_name=REGIAO,
+                        config=Config(connect_timeout=3, read_timeout=5, retries={"max_attempts": 1}))
 
 
 @lru_cache(maxsize=1)
@@ -368,10 +414,10 @@ def _perguntar_aws(pergunta, historico):
     }
 
 
-def perguntar(pergunta, historico=None):
-    """Recebe a pergunta e o histórico (lista de {"pergunta", "resposta", "sql"},
-    da troca mais antiga para a mais recente; vazio na primeira pergunta) e
-    devolve sempre as mesmas chaves:
+def perguntar(pergunta, historico=None, modo="completa"):
+    """Recebe a pergunta, o histórico (lista de {"pergunta", "resposta", "sql"},
+    da troca mais antiga para a mais recente; vazio na primeira pergunta) e o modo
+    ("completa" ou "rapida") e devolve sempre as mesmas chaves:
     ok, resposta, sql, colunas, linhas, tipo, grafico, duracao (segundos) e do_cache."""
     inicio = time.perf_counter()
     pergunta = (pergunta or "").strip()
@@ -381,16 +427,22 @@ def perguntar(pergunta, historico=None):
     elif len(pergunta) > TAMANHO_MAXIMO_PERGUNTA:
         resultado = _falha(f"A pergunta pode ter no máximo {TAMANHO_MAXIMO_PERGUNTA} caracteres.")
     else:
-        chave = _chave_cache(pergunta, historico)
+        chave = _chave_cache(pergunta, historico, modo)
         guardado = _buscar_no_cache(chave)
         if guardado is not None:
             guardado["do_cache"] = True
             guardado["duracao"] = time.perf_counter() - inicio
             return guardado
+        # O modo rápido vai como último item do histórico (a máquina só repassa o histórico).
+        envio = historico + ([{"modo": "rapida"}] if modo == "rapida" else [])
         if MODO_SIMULADO:
             resultado = _perguntar_simulado(pergunta, historico)
+            if modo == "rapida" and resultado.get("tipo") == "dados":
+                # Como a redigir-resposta no modo rápido: a frase sai dos dados, sem Bedrock.
+                resultado.update(resposta=_redigir_rapido()(resultado["colunas"], resultado["linhas"]),
+                                 grafico=None, fala=None)
         else:
-            resultado = _perguntar_aws(pergunta, historico)
+            resultado = _perguntar_aws(pergunta, envio)
         _guardar_no_cache(chave, resultado)
 
     resultado["do_cache"] = False
@@ -399,8 +451,21 @@ def perguntar(pergunta, historico=None):
     # O SQL não entra no log; as colunas sim (mostram se veio o preço por unidade, que dá a
     # resposta em cartões).
     print(f"[chatbot] {resultado['duracao']:.1f} s | ok={resultado['ok']} | "
-          f"historico={len(historico)} | {pergunta[:60]} | colunas={','.join(resultado['colunas'])}")
+          f"historico={len(historico)} | modo={modo} | {pergunta[:60]} | colunas={','.join(resultado['colunas'])}")
     return resultado
+
+
+@lru_cache(maxsize=1)
+def _redigir_rapido():
+    """Modo simulado: a mesma frase rápida da redigir-resposta (src/lambdas), sem chamar a AWS."""
+    import importlib.util
+    from pathlib import Path
+
+    caminho = Path(__file__).resolve().parents[1] / "lambdas" / "redigir_resposta.py"
+    spec = importlib.util.spec_from_file_location("redigir_resposta_local", caminho)
+    modulo = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(modulo)
+    return modulo.frase_rapida
 
 
 # ---------- Voz: Amazon Polly ----------

@@ -63,7 +63,8 @@ def texto_historico(historico):
 
 
 def lambda_handler(event, context):
-    historico = event.get("historico") or []
+    # A tela pode mandar {"modo": "rapida"} no fim do histórico (para a redigir-resposta): não é uma troca.
+    historico = [t for t in (event.get("historico") or []) if not (isinstance(t, dict) and "modo" in t)]
     rotulo = "Pergunta atual" if historico else "Pergunta"
     mensagem = f"{texto_historico(historico)}{rotulo}: {event['pergunta']}"
     resp = bedrock.converse(

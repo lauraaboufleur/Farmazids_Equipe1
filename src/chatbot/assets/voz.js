@@ -8,7 +8,8 @@
 //   áudio não tocar, usa a voz do navegador (síntese de fala), frase por frase, com a
 //   voz escolhida pela tabela de prioridade do app.py (VOZ).
 // Também expõe perguntar(texto) e avisar(texto) em window.farmazidsVoz, para o leitor de
-// código de barras (assets/leitor_ean.js) usar o mesmo caminho.
+// código de barras (assets/leitor_ean.js) usar o mesmo caminho, e cuida dos botões com uma
+// pergunta pronta (atalhos, chips, oferta) e do ☰ que abre a coluna de atalhos.
 // O app.py carrega este arquivo a cada execução e troca __CONFIG__ pela configuração
 // da voz (VOZ, no app.py). Ele só se instala uma vez por página.
 (function () {
@@ -229,10 +230,29 @@
   };
   estado.avisar = avisar;
 
-  // Botões de oferta da resposta ("Ver preços de dipirona na São João"): mandam a pergunta
-  // completa pelo mesmo caminho.
+  // Botões que mandam uma pergunta pronta pelo mesmo caminho: atalhos da coluna lateral, chips
+  // acima da caixa e a oferta da resposta ("Ver preços de dipirona na São João").
+  function fecharColunaNoCelular() {
+    const coluna = document.querySelector('[data-testid="stSidebar"]');
+    const fechar = document.querySelector('[data-testid="stSidebarCollapseButton"] button');
+    if (window.innerWidth <= 768 && coluna && coluna.getAttribute("aria-expanded") === "true" && fechar) fechar.click();
+  }
+
   document.addEventListener("click", (evento) => {
-    const botao = evento.target.closest && evento.target.closest(".oferta-botao");
+    const alvo = evento.target.closest ? evento.target : null;
+    if (!alvo) return;
+    // ☰ do cabeçalho: abre a coluna de atalhos (o botão do Streamlit fica escondido com o cabeçalho dele).
+    if (alvo.closest(".menu-botao")) {
+      evento.preventDefault();
+      const abrir = document.querySelector('[data-testid="stExpandSidebarButton"]');
+      if (abrir) abrir.click();
+      return;
+    }
+    if (alvo.closest("[data-abrir-leitor]")) {
+      fecharColunaNoCelular(); // o leitor (leitor_ean.js) abre por cima
+      return;
+    }
+    const botao = alvo.closest("button[data-pergunta]");
     if (!botao) return;
     evento.preventDefault();
     const caixa = document.querySelector('[data-testid="stChatInputTextArea"]');
@@ -240,6 +260,7 @@
       avisar("Aguarde a resposta e tente de novo.");
       return;
     }
+    fecharColunaNoCelular();
     estado.perguntar(botao.dataset.pergunta);
   });
 

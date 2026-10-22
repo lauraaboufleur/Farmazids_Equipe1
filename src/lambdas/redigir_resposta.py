@@ -14,6 +14,9 @@ Devolve: {"resposta": "...", "grafico": {...} ou null, "fala": "..." ou null}
          fala é a mesma resposta escrita para ser ouvida (botão "Ouvir" da tela).
          Vem null nas comparações por unidade, porque nelas a tela monta a fala com
          os números do ranking. A chave também vem sempre (a máquina lê $.Payload.fala).
+Modo rápido: a tela manda {"modo": "rapida"} como último item do historico (a máquina só
+repassa pergunta, historico, colunas e linhas). Aí a resposta é 1 ou 2 frases montadas aqui,
+com os dados, sem chamar o Bedrock (mais rápido e mais barato), sem gráfico e sem fala.
 """
 import os
 import re
@@ -112,6 +115,113 @@ GRAFICO = {
 }
 
 
+# ---------- Modo rápido (sem Bedrock) ----------
+NOMES_FARMACIAS = {"farmaponte": "FarmaPonte", "veracruz": "VeraCruz", "sao_joao": "São João",
+                   "sao_paulo": "Drogaria São Paulo", "farmazids": "Farmazids"}
+CONTAGENS = {"total_vendas", "vendas_com_preco", "vendas_sem_preco", "unidades", "vendas_codigo_sem_cadastro"}
+
+
+def separar_modo(historico):
+    """(histórico sem a marca do modo, modo). A tela põe {"modo": "rapida"} no fim do histórico."""
+    modo = next((t.get("modo") for t in historico if isinstance(t, dict) and "modo" in t), None)
+    return [t for t in historico if not (isinstance(t, dict) and "modo" in t)], modo
+
+
+def numero(valor):
+    if valor is None or str(valor).strip().lower() in ("", "none", "nan", "null"):
+        return None
+    try:
+        return float(str(valor).replace(",", "."))
+    except ValueError:
+        return None
+
+
+def reais(valor):
+    return "R$ " + f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def inteiro(valor):
+    return f"{valor:,.0f}".replace(",", ".")
+
+
+def em_dinheiro(coluna):
+    return coluna not in CONTAGENS and ("preco" in coluna or "valor" in coluna)
+
+
+def farmacia(valor):
+    return NOMES_FARMACIAS.get(str(valor or "").lower(), str(valor or ""))
+
+
+def data_br(valor):
+    achado = re.match(r"(\d{4})-(\d{2})-(\d{2})", str(valor or ""))
+    return f"{achado.group(3)}/{achado.group(2)}/{achado.group(1)}" if achado else str(valor or "")
+
+
+def frase_rapida(colunas, linhas):
+    """1 ou 2 frases com a resposta e o número principal, montadas só com os dados."""
+    if not linhas:
+        return "Não encontrei dados para essa pergunta."
+    nomes = [c.lower() for c in colunas]
+    indice = {n: i for i, n in enumerate(nomes)}
+
+    def valor(linha, nome):
+        i = indice.get(nome)
+        return linha[i] if i is not None and i < len(linha) else None
+
+    # Vendas: total e valor estimado.
+    if "total_vendas" in indice:
+        total = sum(numero(valor(l, "total_vendas")) or 0 for l in linhas)
+        estimado = sum(numero(valor(l, "valor_estimado")) or 0 for l in linhas)
+        frase = f"Foram {inteiro(total)} {'venda' if total == 1 else 'vendas'}"
+        return frase + (f", com valor estimado de {reais(estimado)} (preços atuais)." if estimado else ".")
+
+    # Comparação por unidade: o mais barato na apresentação vendida pelo maior número de farmácias.
+    por_unidade = next((n for n in nomes if PRECO_POR_UNIDADE.search(n)), None)
+    if por_unidade and "farmacia" in indice:
+        grupos = {}
+        for l in linhas:
+            if (numero(valor(l, por_unidade)) or 0) > 0:
+                chave = (valor(l, "concentracao"), valor(l, "forma"), valor(l, "unidade"))
+                grupos.setdefault(chave, []).append(l)
+        if grupos:
+            grupo = max(grupos.values(), key=lambda g: (len({str(valor(l, "farmacia")).lower() for l in g}), len(g)))
+            grupo.sort(key=lambda l: numero(valor(l, por_unidade)))
+            melhor = grupo[0]
+            unidade = str(valor(melhor, "unidade") or "unidade")
+            produto = valor(melhor, "produto") or valor(melhor, "nome")
+            frase = (f"O menor preço é na {farmacia(valor(melhor, 'farmacia'))}: "
+                     f"{reais(numero(valor(melhor, por_unidade)))} por {unidade}" + (f" ({produto})." if produto else "."))
+            posicao = next((i for i, l in enumerate(grupo, 1) if str(valor(l, "farmacia")).lower() == "farmazids"), None)
+            if posicao and posicao > 1:
+                frase += (f" A Farmazids está em {posicao}º lugar, com "
+                          f"{reais(numero(valor(grupo[posicao - 1], por_unidade)))} por {unidade}.")
+            return frase
+
+    # Evolução: o menor preço na coleta mais recente.
+    preco = next((n for n in nomes if em_dinheiro(n) and not PRECO_POR_UNIDADE.search(n)), None)
+    if "data_coleta" in indice and preco:
+        ultima = max(str(valor(l, "data_coleta")) for l in linhas)
+        recentes = [l for l in linhas if str(valor(l, "data_coleta")) == ultima and numero(valor(l, preco)) is not None]
+        if recentes:
+            melhor = min(recentes, key=lambda l: numero(valor(l, preco)))
+            onde = f", na {farmacia(valor(melhor, 'farmacia'))}" if "farmacia" in indice else ""
+            return f"Na coleta de {data_br(ultima)}, o menor preço foi {reais(numero(valor(melhor, preco)))}{onde}."
+
+    # Qualquer outro resultado: a primeira linha e quantas há.
+    def mostrar(nome, bruto):
+        n = numero(bruto)
+        if n is None:
+            return farmacia(bruto) if nome == "farmacia" else str(bruto)
+        return reais(n) if em_dinheiro(nome) else (inteiro(n) if n == int(n) else f"{n:.2f}".replace(".", ","))
+
+    primeira = linhas[0]
+    partes = [f"{c.replace('_', ' ')}: {mostrar(c, primeira[i])}" for i, c in enumerate(nomes[:3])
+              if i < len(primeira) and primeira[i] not in (None, "")]
+    if len(linhas) == 1:
+        return "Resultado: " + "; ".join(partes) + "."
+    return f"São {inteiro(len(linhas))} resultados. O primeiro: " + "; ".join(partes) + "."
+
+
 def ferramenta(com_grafico, com_fala):
     """A resposta sempre; o gráfico só quando pedido; a fala só fora da comparação por unidade."""
     propriedades = {"resposta": RESPOSTA}
@@ -177,7 +287,10 @@ def validar_grafico(grafico, colunas, linhas):
 
 def lambda_handler(event, context):
     colunas, linhas = event.get("colunas", []), event.get("linhas", [])
-    historico = event.get("historico") or []
+    historico, modo = separar_modo(event.get("historico") or [])
+    if modo == "rapida":
+        # Sem Bedrock: a frase sai dos dados. A tela mostra a tabela em "Ver detalhes".
+        return {"resposta": frase_rapida(colunas, linhas), "grafico": None, "fala": None}
     rotulo = "Pergunta atual" if historico else "Pergunta"
     pediu_grafico = bool(PEDIU_GRAFICO.search(event["pergunta"]))
     com_fala = not any(PRECO_POR_UNIDADE.search(c) for c in colunas)

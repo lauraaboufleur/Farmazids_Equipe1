@@ -41,6 +41,10 @@
   --ean-borda: #E3D3B0;
   --ean-texto: var(--roxo);
   --ean-erro: #B5533C;
+  /* Coluna de atalhos e chips */
+  --lateral-fundo: #F5EDDF;
+  --lateral-botao: #FFFDF8;
+  --lateral-borda: #E3D3B0;
   /* Aviso de valor parcial nas vendas */
   --aviso-vendas-fundo: #FDF3E1;
   --aviso-vendas-borda: #C2A05A;
@@ -68,10 +72,9 @@
 
 /* ---------- Fundo da área principal ---------- */
 .stApp { background-color: var(--fundo); }
-/* Sem barra lateral: esconde a barra do Streamlit e o botão que abriria a lateral. */
-[data-testid="stHeader"],
-[data-testid="stSidebar"],
-[data-testid="stSidebarCollapsedControl"] { display: none; }
+/* Esconde a barra do Streamlit. A coluna de atalhos (st.sidebar) abre pelo ☰ do cabeçalho:
+   o botão do Streamlit que a abre fica nessa barra, escondido, e o assets/voz.js clica nele. */
+[data-testid="stHeader"] { display: none; }
 [data-testid="stMainBlockContainer"] { max-width: 1100px; padding-top: 0; padding-bottom: 7rem; }
 
 /* ---------- Cabeçalho ---------- */
@@ -534,3 +537,72 @@ html.ean-aberto, html.ean-aberto body { overflow: hidden; }
   border-left: 4px solid var(--aviso-vendas-borda); font-size: 0.95rem; line-height: 1.45;
 }
 .aviso-vendas div + div { margin-top: 6px; }
+
+/* ---------- Coluna de atalhos (st.sidebar) ---------- */
+[data-testid="stSidebar"], [data-testid="stSidebarContent"] { background-color: var(--lateral-fundo); }
+[data-testid="stSidebar"] { border-right: 1px solid var(--linha-cabecalho); }
+[data-testid="stSidebarCollapseButton"] button { color: var(--cor-hora); }
+.st-key-nova-conversa button {
+  border-radius: 999px; border: 0; background: var(--botao-enviar); color: #FFFFFF;
+  font-family: "Cinzel", serif; letter-spacing: 0.06em;
+}
+.st-key-nova-conversa button:hover { filter: brightness(1.12); color: #FFFFFF; }
+.st-key-nova-conversa button p { color: inherit; }
+.atalhos-grupo {
+  margin: 16px 0 6px; font-family: "Cinzel", serif; font-size: 0.72rem; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--cor-lema);
+}
+.atalho-botao {
+  display: block; width: 100%; margin: 0 0 6px; padding: 7px 12px; cursor: pointer; text-align: left;
+  border-radius: 10px; border: 1px solid var(--lateral-borda); background: var(--lateral-botao);
+  color: var(--texto-assistente); font: inherit; font-size: 14px; line-height: 1.35;
+}
+.atalho-botao:hover, .atalho-botao:focus-visible { border-color: var(--dourado); background: var(--balao-usuario); }
+.atalho-botao:focus-visible, .chip:focus-visible, .menu-botao:focus-visible { outline: 2px solid var(--dourado); outline-offset: 2px; }
+.lateral-rodape {
+  margin-top: 18px; padding-top: 10px; border-top: 1px solid var(--lateral-borda);
+  font-size: 12px; line-height: 1.6; color: var(--cor-hora);
+}
+
+/* ☰ do cabeçalho: ao lado do leitor de código de barras, no mesmo estilo. Some quando a coluna
+   está aberta e onde não há coluna (no Dashboard). */
+.st-key-cabecalho [data-testid="stElementContainer"]:has(.menu-botao) {
+  position: absolute; right: 54px; top: 1.2rem; width: auto; z-index: 1;
+}
+.menu-botao {
+  display: block; width: 42px; height: 42px; padding: 0; cursor: pointer;
+  border-radius: 50%; border: 1px solid var(--dourado); background: transparent;
+  color: var(--cor-lema); font-size: 20px; line-height: 1;
+}
+.menu-botao:hover { background: var(--balao-usuario); border-color: var(--cor-lema); }
+body:has([data-testid="stSidebar"][aria-expanded="true"]) .menu-botao,
+body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
+
+/* ---------- Acima da caixa de pergunta: chips (conversa vazia) e o modo de resposta ---------- */
+.chips {
+  display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 4px;
+  scrollbar-width: none; -webkit-overflow-scrolling: touch;
+}
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: 0 0 auto; white-space: nowrap; padding: 6px 14px; cursor: pointer;
+  border-radius: 999px; border: 1px solid var(--borda-usuario); background: var(--fundo-caixa);
+  color: var(--texto-assistente); font: inherit; font-size: 13px;
+}
+.chip:hover { background: var(--balao-usuario); border-color: var(--dourado); }
+.st-key-modo-resposta { margin-bottom: -6px; }
+/* !important: o estilo do Streamlit para o botão do seletor é mais específico que estes. */
+.st-key-modo-resposta button {
+  min-height: 30px; padding: 2px 12px; font-size: 13px;
+  background: var(--fundo-caixa) !important; color: var(--texto-assistente) !important;
+  border: 1px solid var(--divisoria-caixa) !important;
+}
+.st-key-modo-resposta button[aria-checked="false"]:hover { border-color: var(--cor-lema) !important; color: var(--cor-lema) !important; }
+.st-key-modo-resposta button[aria-checked="true"] {
+  background: var(--botao-enviar) !important; color: #FFFFFF !important; border-color: var(--botao-enviar) !important;
+}
+.st-key-modo-resposta button p { color: inherit; font-size: 13px; }
+@media (max-width: 640px) {
+  .st-key-cabecalho [data-testid="stElementContainer"]:has(.menu-botao) { top: 0.4rem; right: 48px; }
+  .menu-botao { width: 40px; height: 40px; font-size: 18px; }
+}

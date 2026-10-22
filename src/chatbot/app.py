@@ -24,7 +24,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from cliente_chatbot import MODO_SIMULADO, perguntar, sintetizar
+from cliente_chatbot import MODO_SIMULADO, perguntar, sintetizar, ultima_coleta
 from dashboard import mostrar_dashboard
 
 ASSETS = Path(__file__).parent / "assets"
@@ -254,6 +254,38 @@ def aplicar_estilo():
 # Botão do leitor de código de barras (cabeçalho). O ícone vem do estilo.css (máscaras
 # com as cores do modo claro e do escuro): o st.html apaga SVG escrito aqui.
 BOTAO_EAN = "<button type='button' class='ean-botao' title='Ler código de barras' aria-label='Ler código de barras'></button>"
+# Abre a coluna de atalhos quando ela está recolhida (celular). O assets/voz.js cuida do clique.
+BOTAO_MENU = "<button type='button' class='menu-botao' title='Atalhos' aria-label='Abrir os atalhos'>☰</button>"
+
+# ---------- Atalhos (coluna lateral e chips) ----------
+# Para mudar os atalhos, é só editar aqui: (grupo, [(rótulo do botão, pergunta enviada)]).
+# Pergunta LEITOR abre o leitor de código de barras em vez de mandar pergunta.
+LEITOR = None
+ATALHOS = [
+    ("Preços", [
+        ("Dipirona 1g mais barata", "Qual farmácia tem a dipirona 1g mais barata?"),
+        ("Comparar paracetamol 750mg", "Compare o preço do paracetamol 750mg nas farmácias"),
+    ]),
+    ("Comparar", [
+        ("Onde a Farmazids está mais cara", "Em quais produtos a Farmazids está mais cara que os concorrentes?"),
+        ("Evolução do preço", "Mostre um gráfico da evolução do preço da dipirona"),
+    ]),
+    ("Vendas", [
+        ("Mais vendidos da Farmazids", "Quais os 10 produtos mais vendidos pela Farmazids em 2026?"),
+        ("Vendas por mês", "Vendas de cada farmácia por mês no 1º semestre de 2026"),
+    ]),
+    ("Remédios", [
+        ("Para que serve", "Para que serve a losartana?"),
+    ]),
+    ("Código de barras", [
+        ("Ler código de barras", LEITOR),
+    ]),
+]
+# Os 4 que aparecem como chips acima da caixa de pergunta, com a conversa vazia (pelos rótulos).
+CHIPS = ["Dipirona 1g mais barata", "Comparar paracetamol 750mg", "Mais vendidos da Farmazids", "Para que serve"]
+# Seletor de modo junto da caixa de pergunta: rótulo -> modo enviado ao backend.
+MODOS = {"⚡ Rápida": "rapida", "Completa": "completa"}
+MODO_PADRAO = "Completa"
 
 
 def instalar_scripts():
@@ -1409,19 +1441,28 @@ def mostrar(mensagem, chave):
     avatar = LOGO if papel == "assistant" else ":material/person:"
     with st.container(key=f"msg-{chave}-{papel}"):
         with st.chat_message(papel, avatar=avatar):
-            comparacao = ler_comparacao(mensagem) if papel == "assistant" and mensagem.get("colunas") else None
+            # Resposta rápida: só a frase; o aviso e a tabela ficam em "Ver detalhes", sem cartões.
+            rapida = papel == "assistant" and mensagem.get("modo") == "rapida"
+            comparacao = ler_comparacao(mensagem) if papel == "assistant" and mensagem.get("colunas") \
+                and not rapida else None
             if comparacao:
                 st.html(html_frase(mensagem["texto"]) + html_comparacao(comparacao))
             else:
                 st.markdown(limpar_texto(mensagem["texto"]))
             aviso = html_aviso_vendas(mensagem) if papel == "assistant" else ""
-            if aviso:
+            if aviso and not rapida:
                 st.html(aviso)
             if mensagem.get("oferta"):
                 # O clique manda a pergunta completa pela caixa (assets/voz.js, como a voz e o leitor de EAN).
                 st.html(html_oferta(mensagem["oferta"]))
+            if rapida and mensagem.get("linhas"):
+                with st.expander("Ver detalhes", key=f"detalhes-{chave}"):
+                    if aviso:
+                        st.html(aviso)
+                    st.dataframe(montar_tabela(mensagem["colunas"], mensagem["linhas"]), hide_index=True,
+                                 width="stretch", column_config=LARGURAS)
             # Com zero linhas não há tabela nem gráfico (nada de tabela vazia com "empty").
-            if mensagem.get("colunas") and mensagem.get("linhas"):
+            elif mensagem.get("colunas") and mensagem.get("linhas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
                 if comparacao:
                     # Na comparação, a tabela completa fica recolhida.
@@ -1474,7 +1515,60 @@ def montar_historico(mensagens):
     return trocas[-TROCAS_NO_HISTORICO:]
 
 
-def responder(pergunta, historico):
+def html_atalho(rotulo, pergunta, classe="atalho-botao"):
+    """Botão que manda a pergunta pela caixa (assets/voz.js), ou abre o leitor (assets/leitor_ean.js)."""
+    acao = "data-abrir-leitor='1'" if pergunta is LEITOR else f"data-pergunta='{html.escape(pergunta, quote=True)}'"
+    return f"<button type='button' class='{classe}' {acao}>{html.escape(rotulo)}</button>"
+
+
+def nova_conversa():
+    st.session_state.mensagens = []
+    st.session_state.hora_inicio = agora()
+    st.session_state.respostas_com_audio = set()
+
+
+def desenhar_coluna_lateral():
+    """Coluna de atalhos: "+ Nova conversa", os grupos de ATALHOS e a data da última coleta."""
+    with st.sidebar:
+        st.button("+ Nova conversa", key="nova-conversa", on_click=nova_conversa, width="stretch",
+                  disabled=st.session_state.pendente is not None)
+        grupos = "".join(
+            f"<div class='atalhos-grupo'>{html.escape(grupo)}</div>" + "".join(html_atalho(r, p) for r, p in itens)
+            for grupo, itens in ATALHOS
+        )
+        coleta = ultima_coleta()
+        quando = f"Última coleta: {data_br(coleta)}<br>" if coleta else ""
+        st.html(f"<nav class='atalhos' aria-label='Atalhos'>{grupos}</nav>"
+                f"<div class='lateral-rodape'>{quando}4 farmácias + Farmazids</div>")
+
+
+def desenhar_rodape_da_caixa():
+    """Logo acima da caixa de pergunta: os chips (só com a conversa vazia) e o seletor de modo."""
+    with st._bottom:
+        if not st.session_state.mensagens and st.session_state.pendente is None:
+            atalhos = {rotulo: pergunta for _, itens in ATALHOS for rotulo, pergunta in itens}
+            st.html("<div class='chips' role='group' aria-label='Sugestões'>"
+                    + "".join(html_atalho(r, atalhos[r], "chip") for r in CHIPS if r in atalhos) + "</div>")
+        with st.container(key="modo-resposta"):
+            st.segmented_control(
+                "Modo de resposta", list(MODOS), key="modo_escolha", on_change=escolher_modo,
+                label_visibility="collapsed", disabled=st.session_state.pendente is not None,
+            )
+
+
+def escolher_modo():
+    # Clicar na opção marcada desmarcaria: aí ela volta, e a escolha fica a mesma.
+    if st.session_state.modo_escolha is None:
+        st.session_state.modo_escolha = st.session_state.modo_resposta
+    else:
+        st.session_state.modo_resposta = st.session_state.modo_escolha
+
+
+def modo_atual():
+    return MODOS.get(st.session_state.get("modo_resposta"), "completa")
+
+
+def responder(pergunta, historico, modo="completa"):
     """Chama o backend numa thread separada e, enquanto isso, atualiza o
     cronômetro do balão de espera a cada meio segundo."""
     espera = st.empty()
@@ -1484,7 +1578,7 @@ def responder(pergunta, historico):
 
     inicio = time.perf_counter()
     with ThreadPoolExecutor(max_workers=1) as executor:
-        tarefa = executor.submit(perguntar, pergunta, historico)
+        tarefa = executor.submit(perguntar, pergunta, historico, modo)
         while not tarefa.done():
             area_texto.markdown(texto_espera(int(time.perf_counter() - inicio)), unsafe_allow_html=True)
             time.sleep(0.5)
@@ -1504,6 +1598,9 @@ if "hora_inicio" not in st.session_state:
     st.session_state.hora_inicio = agora()
 if "pendente" not in st.session_state:
     st.session_state.pendente = None  # pergunta esperando resposta
+if "modo_resposta" not in st.session_state:
+    st.session_state.modo_resposta = MODO_PADRAO  # "⚡ Rápida" ou "Completa", lembrado na sessão
+    st.session_state.modo_escolha = MODO_PADRAO
 
 aplicar_estilo()
 pedir_login()
@@ -1527,6 +1624,7 @@ with st.container(key="cabecalho"):
     # (o assets/leitor_ean.js cuida do clique).
     st.image(TITULO_ESCURO if modo_escuro() else TITULO)
     st.html(BOTAO_EAN)
+    st.html(BOTAO_MENU)
     st.markdown(
         "<p class='subtitulo'>Assistente de dados para consulta de preços, "
         "concorrentes, vendas e medicamentos.</p>",
@@ -1572,6 +1670,10 @@ if pagina == "Dashboard":
     })
     st.stop()  # no dashboard não aparecem a conversa nem a caixa de pergunta
 
+# ---------- Atalhos ----------
+desenhar_coluna_lateral()
+desenhar_rodape_da_caixa()
+
 # ---------- Conversa ----------
 # Redesenha a conversa inteira a cada interação (é assim que o Streamlit funciona).
 mostrar({"papel": "assistant", "texto": BOAS_VINDAS, "hora": st.session_state.hora_inicio}, "inicio")
@@ -1596,7 +1698,8 @@ if st.session_state.pendente:
     try:
         # A última mensagem é a própria pergunta pendente: fica fora do histórico.
         historico = montar_historico(st.session_state.mensagens[:-1])
-        resultado = responder(st.session_state.pendente, historico)
+        modo = modo_atual()
+        resultado = responder(st.session_state.pendente, historico, modo)
     except Exception as erro:  # nunca deixar a caixa bloqueada para sempre
         print(f"[chatbot] erro inesperado: {erro!r}")
         resultado = {"ok": False, "resposta": "Algo deu errado ao responder. Tente de novo em instantes.",
@@ -1605,12 +1708,16 @@ if st.session_state.pendente:
         st.session_state.pendente = None
 
     pergunta_atual = st.session_state.mensagens[-1]["texto"]
+    rapida = modo_atual() == "rapida" and resultado.get("tipo") == "dados"
+    # Na rápida, a frase já vem curta (redigir-resposta): nada de acrescentar texto de vendas.
+    texto_base = resultado["resposta"] if rapida else texto_de_vendas(
+        resultado["resposta"], resultado["colunas"], resultado["linhas"], resultado["sql"], pergunta_atual)
     texto_resposta = padronizar_farmacias(texto_ean_nao_encontrado(texto_farmacias_sem_vendas(
-        texto_de_vendas(resultado["resposta"], resultado["colunas"], resultado["linhas"], resultado["sql"], pergunta_atual),
-        resultado, pergunta_atual, st.session_state.mensagens[:-1]), resultado, pergunta_atual))
+        texto_base, resultado, pergunta_atual, st.session_state.mensagens[:-1]), resultado, pergunta_atual))
     st.session_state.mensagens.append({
         "papel": "assistant",
         "texto": texto_resposta,
+        "modo": "rapida" if rapida else "completa",  # rápida: sem cartões, tabela em "Ver detalhes"
         # "Para essa farmácia, posso mostrar os preços coletados": botão com a pergunta completa.
         "oferta": oferta_de_precos(texto_resposta, pergunta_atual),
         "ok": resultado["ok"],

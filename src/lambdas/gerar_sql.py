@@ -353,7 +353,8 @@ def farmacias_citadas(pergunta, farmacias):
 def lambda_handler(event, context):
     pergunta = event["pergunta"]
     erro_anterior = event.get("erro_anterior") or ""
-    historico = event.get("historico") or []
+    # A tela pode mandar {"modo": "rapida"} no fim do histórico (para a redigir-resposta): não é uma troca.
+    historico = [t for t in (event.get("historico") or []) if not (isinstance(t, dict) and "modo" in t)]
 
     leitor = PERGUNTA_DO_LEITOR.match(sem_acento(pergunta).strip())
     if leitor and not erro_anterior:
