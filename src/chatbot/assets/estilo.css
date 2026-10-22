@@ -708,6 +708,9 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
   html.imprimindo [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho),
   html.imprimindo .st-key-seletor-pagina,
   html.imprimindo [class*="st-key-msg-"]:not(.imprimir-esta),
+  /* As perguntas (st-key-msg-N-user, no Streamlit 1.65), sempre fora do PDF. */
+  html.imprimindo [class*="st-key-msg-"][class*="-user"],
+  html.imprimindo [data-testid="stLayoutWrapper"]:has(> [class*="st-key-msg-"][class*="-user"]),
   html.imprimindo .imprimir-esta [data-testid="stChatMessageAvatarCustom"],
   html.imprimindo .imprimir-esta [data-testid="stChatMessage"] > img,
   html.imprimindo .imprimir-esta .hora,

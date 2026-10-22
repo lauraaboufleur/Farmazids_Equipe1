@@ -347,8 +347,9 @@
   // Marca a resposta (imprimir-esta), abre o que estiver recolhido nela (tabela, detalhes) e chama o
   // "Salvar como PDF" do navegador; o @media print do estilo.css esconde todo o resto.
   function imprimirResposta(botao) {
+    // Só uma resposta do chatbot (container com a classe st-key-msg-N-assistant), nunca uma pergunta.
     const resposta = botao.closest('[class*="st-key-msg-"]');
-    if (!resposta) return;
+    if (!resposta || !Array.from(resposta.classList).some((c) => /^st-key-msg-.+-assistant$/.test(c))) return;
     document.querySelectorAll(".imprimir-esta").forEach((r) => r.classList.remove("imprimir-esta"));
     resposta.classList.add("imprimir-esta");
     document.documentElement.classList.add("imprimindo");

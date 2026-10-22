@@ -1467,8 +1467,9 @@ def rodape(mensagem, coleta=None, chave=None, fala="", origem=""):
         texto += (f" <button type='button' class='voz-ouvir' data-id='{chave}' data-origem='{origem}' "
                   f"title='{html.escape(dica, quote=True)}' "
                   f"data-fala='{html.escape(fala, quote=True)}'>🔊 Ouvir</button>")
-    if chave is not None and chave != "inicio":
-        # Abre o "Salvar como PDF" do navegador só com esta resposta (assets/voz.js e @media print).
+    if chave is not None and chave != "inicio" and mensagem.get("papel") == "assistant":
+        # Só nas respostas do chatbot (nunca no balão da pergunta nem nas boas-vindas): abre o
+        # "Salvar como PDF" do navegador só com esta resposta (assets/voz.js e @media print).
         texto += (" <button type='button' class='pdf-botao' title='Salvar esta resposta em PDF' "
                   "aria-label='Salvar esta resposta em PDF'><span>PDF</span></button>")
     return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
