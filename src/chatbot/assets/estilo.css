@@ -636,9 +636,9 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
 }
 
 /* ---------- Só no PDF ---------- */
-.so-impressao, .st-key-impressao-logo { display: none; }
-/* Cópia clara do gráfico (modo escuro): desenhada fora da tela, com largura de verdade. */
-[class*="st-key-grafico-impressao-"] { position: absolute; left: -10000px; top: 0; width: 760px; }
+.so-impressao { display: none; }
+/* Gráfico do PDF: desenhado fora da tela, já na largura da página A4 e com cores claras. */
+[class*="st-key-grafico-impressao-"] { position: absolute; left: -10000px; top: 0; width: 720px; }
 
 @media print {
   @page { size: A4; margin: 12mm; }
@@ -710,6 +710,7 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
   html.imprimindo [class*="st-key-msg-"]:not(.imprimir-esta),
   html.imprimindo .imprimir-esta [data-testid="stChatMessageAvatarCustom"],
   html.imprimindo .imprimir-esta [data-testid="stChatMessage"] > img,
+  html.imprimindo .imprimir-esta .hora,
   html.imprimindo .voz-ouvir, html.imprimindo .pdf-botao, html.imprimindo .oferta-botao,
   html.imprimindo .menu-botao, html.imprimindo .voz-aviso,
   html.imprimindo .imprimir-esta [data-testid="stDataFrame"],
@@ -719,7 +720,6 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
   html.imprimindo [data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] { gap: 0.5rem !important; }
   html.imprimindo [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:has(> .stHtml:empty),
   html.imprimindo [data-testid="stLayoutWrapper"]:has(> [class*="st-key-msg-"]:not(.imprimir-esta)) { display: none !important; }
-  html.imprimindo .st-key-impressao-logo { display: block !important; margin-bottom: 8px; }
   html.imprimindo .imprimir-esta .so-impressao { display: block !important; }
   /* A resposta inteira, sem balão nem bordas. */
   html.imprimindo .imprimir-esta [data-testid="stChatMessage"],
@@ -729,15 +729,19 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
     background: #FFFFFF !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important;
   }
   html.imprimindo .imprimir-esta, html.imprimindo .imprimir-esta * { color-adjust: exact; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-  /* No modo escuro, o gráfico escuro sai e entra a cópia clara. */
-  html.imprimindo .imprimir-esta [class*="st-key-grafico-impressao-"] { position: static !important; width: 100% !important; }
+  /* O gráfico da tela sai e entra o do PDF (largura fixa do A4, cores claras), inteiro numa página:
+     ocupa a largura útil, com altura proporcional. */
+  html.imprimindo .imprimir-esta [class*="st-key-grafico-impressao-"] {
+    position: static !important; width: 100% !important; margin-top: 8px;
+    break-inside: avoid; page-break-inside: avoid;
+  }
+  html.imprimindo .imprimir-esta [class*="st-key-grafico-impressao-"] * { max-width: 100% !important; }
+  html.imprimindo .imprimir-esta [class*="st-key-grafico-impressao-"] canvas,
+  html.imprimindo .imprimir-esta [class*="st-key-grafico-impressao-"] svg { width: 100% !important; height: auto !important; }
   html.imprimindo .imprimir-esta:has([class*="st-key-grafico-impressao-"]) [class*="st-key-grafico-"]:not([class*="st-key-grafico-impressao-"]) { display: none !important; }
-  /* Topo: a pergunta e a data. */
-  .impressao-topo { margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid #E3D3B0; }
-  .impressao-topo p { margin: 0; }
-  .impressao-rotulo { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #9A7A3E !important; }
-  .impressao-pergunta { font-size: 15px; font-weight: 600; color: #351A4D !important; }
-  .impressao-data { margin-top: 4px !important; font-size: 11px; color: #6B5C7A !important; }
+  /* Cartões e tabela: na largura da página, sem partir um cartão (nem uma linha da tabela) entre páginas. */
+  html.imprimindo .imprimir-esta .cmp-cartao { max-width: 100% !important; break-inside: avoid; page-break-inside: avoid; }
+  html.imprimindo .imprimir-esta .cmp-linha { break-inside: avoid; page-break-inside: avoid; }
   /* A tabela inteira: todas as colunas cabem na página, nomes quebram linha. */
   .tabela-impressao { margin: 10px 0; }
   .tabela-impressao table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: 9.5px; }
@@ -746,7 +750,9 @@ body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
     white-space: normal; overflow-wrap: break-word; hyphens: manual; color: #2E1F3E !important;
   }
   .tabela-impressao th { background: #F1EAF6 !important; font-weight: 600; }
-  .tabela-impressao tr { break-inside: avoid; }
+  .tabela-impressao { max-width: 100%; }
+  .tabela-impressao tr { break-inside: avoid; page-break-inside: avoid; }
+  .tabela-impressao thead { display: table-header-group; }  /* o cabeçalho repete em cada página */
   .cmp-cartao, .aviso-vendas, [data-testid="stVegaLiteChart"] { break-inside: avoid; }
 }
 /* Celular estreito (360 px, muitos Android): o texto de exemplo ainda cabe numa linha. */

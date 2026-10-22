@@ -1474,16 +1474,9 @@ def rodape(mensagem, coleta=None, chave=None, fala="", origem=""):
     return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
 
 
-def html_topo_impressao(mensagem, coleta=None):
-    """Só no PDF, no alto da resposta: a pergunta, a data e a hora e, na comparação, a data da coleta."""
-    pergunta = mensagem.get("pergunta") or ""
-    quando = f"Resposta de {mensagem.get('data') or datetime.now(FUSO).strftime('%d/%m/%Y')} às {mensagem['hora']}"
-    if coleta:
-        quando += f" · Coleta de {coleta}"
-    return ("<div class='so-impressao impressao-topo'>"
-            + (f"<p class='impressao-rotulo'>Pergunta</p><p class='impressao-pergunta'>{html.escape(pergunta)}</p>"
-               if pergunta else "")
-            + f"<p class='impressao-data'>{html.escape(quando)}</p></div>")
+# Largura do gráfico do PDF (área do desenho, sem os eixos): com os eixos e a legenda, fica abaixo da
+# largura útil do A4 com margens de 12 mm (~700 px).
+LARGURA_GRAFICO_PDF = 590
 
 
 def html_tabela_impressao(mensagem):
@@ -1508,9 +1501,6 @@ def mostrar(mensagem, chave):
             rapida = papel == "assistant" and mensagem.get("modo") == "rapida"
             comparacao = ler_comparacao(mensagem) if papel == "assistant" and mensagem.get("colunas") \
                 and not rapida else None
-            if papel == "assistant" and chave != "inicio":
-                # Só no PDF (botão "PDF" do rodapé): a pergunta, a data e a hora no alto da resposta.
-                st.html(html_topo_impressao(mensagem, comparacao and comparacao["coleta"]))
             if comparacao:
                 st.html(html_frase(mensagem["texto"]) + html_comparacao(comparacao))
             else:
@@ -1547,12 +1537,12 @@ def mostrar(mensagem, chave):
                     with st.expander("Ver gráfico", expanded=True,
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
-                    if modo_escuro():
-                        # O PDF sai em papel branco: no modo escuro, uma cópia com as cores claras, fora
-                        # da tela (desenhada com largura de verdade, para aparecer inteira na impressão).
-                        with st.container(key=f"grafico-impressao-{chave}"):
-                            st.altair_chart(montar_grafico(so_grupo_principal(mensagem, comparacao), escuro=False),
-                                            theme=None, width="stretch")
+                    # O gráfico do PDF: uma cópia já desenhada fora da tela, com largura fixa que cabe na
+                    # página A4 (não a da tela do celular) e cores claras (o papel é branco, mesmo no
+                    # modo escuro). Na impressão, ela entra no lugar do gráfico da tela.
+                    with st.container(key=f"grafico-impressao-{chave}"):
+                        st.altair_chart(montar_grafico(so_grupo_principal(mensagem, comparacao), escuro=False)
+                                        .properties(width=LARGURA_GRAFICO_PDF), theme=None, width="content")
             # "Ouvir" só nas respostas (não na pergunta nem nas boas-vindas).
             fala, origem = "", ""
             if papel == "assistant" and chave != "inicio":
@@ -1700,10 +1690,6 @@ with st.container(key="cabecalho"):
             unsafe_allow_html=True,
         )
 
-# Logo do PDF de uma resposta: escondido na tela, aparece só na impressão (ver @media print).
-with st.container(key="impressao-logo"):
-    st.image(TITULO, width=230)
-
 # ---------- Chat ou Dashboard ----------
 # Bloqueado enquanto uma resposta está a caminho, como o botão do tema: trocar de
 # página redesenha a tela, e isso interromperia a resposta.
@@ -1802,6 +1788,5 @@ if st.session_state.pendente:
         "duracao": resultado.get("duracao"),
         "do_cache": resultado.get("do_cache", False),
         "hora": agora(),
-        "data": datetime.now(FUSO).strftime("%d/%m/%Y"),  # para o PDF
     })
     st.rerun()  # desbloqueia a caixa e mostra a resposta
