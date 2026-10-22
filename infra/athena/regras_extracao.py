@@ -248,13 +248,19 @@ def ctes_marca(fonte):
       sem acento; nem contida na votada nem contendo a votada), também fica vazio;
     - marca que já existe nunca é trocada (só a escrita é padronizada).
     Termina em com_marca, com marca_final e marca_origem ('coleta', 'ean' ou nulo)."""
-    return f"""fonte AS (
+    return f"""ultima_coleta AS (
+  -- a coleta mais recente de cada farmácia, pela partição dt: tudo o que vem depois (marca, quantidade,
+  -- preço por unidade) só calcula essas linhas, e o Athena não lê as partições antigas
+  SELECT farmacia, max(dt) AS dt FROM {fonte} GROUP BY farmacia
+),
+fonte AS (
   SELECT c.*,
     CASE WHEN lower(trim(CAST(c.marca AS varchar))) IN ('', 'none', 'null', 'nan') THEN NULL
          ELSE trim(CAST(c.marca AS varchar)) END AS marca_lida,
     regexp_replace(trim(CAST(c.ean AS varchar)), '^0+', '') AS ean_n,
     {palavras('c.nome', bordas=True)} AS nome_n
   FROM {fonte} c
+  JOIN ultima_coleta u ON u.farmacia = c.farmacia AND u.dt = c.dt
 ),
 grafias AS (
   -- a melhor grafia de cada marca: nada de nome longo todo em maiúsculas; depois a com mais acentos
@@ -279,14 +285,10 @@ marcas_conhecidas AS (
     WHERE v.nomes >= 5)
   WHERE palavras <> ''
 ),
-ultima_coleta AS (
-  SELECT farmacia, max(date(data_coleta)) AS dia FROM fonte GROUP BY farmacia
-),
 marcas_ean AS (
-  -- a marca de cada EAN em cada farmácia, na coleta mais recente dela
+  -- a marca de cada EAN em cada farmácia (a fonte já é só a coleta mais recente)
   SELECT DISTINCT f.farmacia, f.ean_n, g.marca_padrao
   FROM fonte f
-  JOIN ultima_coleta u ON u.farmacia = f.farmacia AND date(f.data_coleta) = u.dia
   JOIN grafias g ON g.chave = {chave_marca('f.marca_lida')}
   WHERE f.marca_lida IS NOT NULL AND f.ean_n <> ''
 ),
@@ -382,7 +384,9 @@ def gerar_sql(nome_view, origem, colunas_origem, precos, titulo, comparacao=None
         extra = ("\n-- Para comparar farmácias: preco_comparacao (o Pix; se vazio, o cartão), preco_comparacao_origem"
                  "\n--   ('pix' ou 'cartao') e preco_comparacao_por_unidade. A São João não informa Pix.")
     if marca_por_ean:
-        extra += ("\n-- Marca: escrita padronizada (acentos e maiúsculas certos); vazia, vem do mesmo EAN nas outras farmácias"
+        extra += ("\n-- Só a coleta mais recente de cada farmácia (filtrada pela partição dt logo no início, antes de"
+                  "\n--   qualquer cálculo). O histórico fica na vw_precos_concorrentes."
+                  "\n-- Marca: escrita padronizada (acentos e maiúsculas certos); vazia, vem do mesmo EAN nas outras farmácias"
                   "\n--   (coleta mais recente; a mais frequente; empate, ou nome citando outra marca, fica vazio)."
                   "\n--   marca_origem: 'coleta' ou 'ean'.")
     return (CABECALHO.format(titulo=titulo, origem=origem, extra=extra)

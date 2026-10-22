@@ -126,3 +126,27 @@ WHERE lower(farmacia) = 'farmaponte' AND marca_origem = 'ean'
                            WHERE lower(farmacia) = 'farmaponte')
 ORDER BY nome
 LIMIT 50;
+
+-- 12. As tabelas das farmácias são particionadas por dt? (a coleta grava em processed/<farmácia>/dt=AAAA-MM-DD/)
+--     12a mostra de quais tabelas a vw_precos_concorrentes lê; em cada uma, 12b lista as partições
+--     (se responder "is not partitioned", não é: aí o filtro da view ainda limita o cálculo à coleta
+--     mais recente, mas o Athena lê o histórico inteiro).
+SHOW CREATE VIEW t1_eq1_farmazids.vw_precos_concorrentes;
+-- SHOW PARTITIONS t1_eq1_farmazids.<tabela_da_farmacia>;
+
+-- 13. "Dados verificados" antes e depois da nova vw_precos_unitarios (veja no console, abaixo do
+--     resultado, e o tempo de execução). Rode a 13a ANTES de publicar a view nova e a 13b DEPOIS.
+--     O resultado das duas deve ser o mesmo (mesmos produtos por farmácia); muda o quanto o Athena lê.
+-- 13a. Antes (a view antiga tem todas as coletas: filtra a mais recente de cada farmácia aqui).
+SELECT u.farmacia, count(*) AS produtos, round(avg(u.preco_pix_por_unidade), 3) AS media_pix_por_unidade
+FROM t1_eq1_farmazids.vw_precos_unitarios u
+JOIN (SELECT farmacia, max(dt) AS dt FROM t1_eq1_farmazids.vw_precos_concorrentes GROUP BY farmacia) ultima
+  ON ultima.farmacia = u.farmacia AND ultima.dt = u.dt
+WHERE lower(u.nome) LIKE '%dipirona%'
+GROUP BY u.farmacia ORDER BY u.farmacia;
+
+-- 13b. Depois (a view nova já é só a coleta mais recente).
+SELECT farmacia, count(*) AS produtos, round(avg(preco_pix_por_unidade), 3) AS media_pix_por_unidade
+FROM t1_eq1_farmazids.vw_precos_unitarios
+WHERE lower(nome) LIKE '%dipirona%'
+GROUP BY farmacia ORDER BY farmacia;

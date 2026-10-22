@@ -20,6 +20,7 @@ com os dados, sem chamar o Bedrock (mais rápido e mais barato), sem gráfico e 
 """
 import os
 import re
+import time
 
 import boto3
 from botocore.config import Config
@@ -27,6 +28,9 @@ from botocore.config import Config
 REGION = os.environ.get("AWS_REGION", "us-east-2")
 MODEL_ID = os.environ.get("MODEL_ID", "us.anthropic.claude-haiku-5-5")
 LINHAS_NO_PROMPT = int(os.environ.get("LINHAS_NO_PROMPT", "100"))
+# A resposta é curta (algumas frases, a fala e, às vezes, o gráfico): 800 tokens sobram e cortam
+# uma resposta desembestada. O prompt (~850 tokens) fica abaixo do mínimo do prompt caching.
+MAX_TOKENS = int(os.environ.get("MAX_TOKENS", "800"))
 # A tela já manda no máximo 3 trocas; o corte aqui é só uma garantia.
 TROCAS_NO_HISTORICO = 3
 TIPOS_GRAFICO = {"barras", "linha"}
@@ -322,11 +326,25 @@ def validar_grafico(grafico, colunas, linhas):
     return {"tipo": tipo, "x": x, "y": y, "serie": serie, "pedido": True}  # só há gráfico quando pedido
 
 
+def tempo(etapa, inicio):
+    """Log para medir: "[tempo] etapa=bedrock 1.23 s"."""
+    print(f"[tempo] etapa={etapa} {time.perf_counter() - inicio:.2f} s")
+
+
 def lambda_handler(event, context):
+    inicio = time.perf_counter()
+    try:
+        return redigir(event)
+    finally:
+        tempo("total", inicio)
+
+
+def redigir(event):
     colunas, linhas = event.get("colunas", []), event.get("linhas", [])
     historico, modo = separar_modo(event.get("historico") or [])
     if modo == "rapida":
         # Sem Bedrock: a frase sai dos dados. A tela mostra a tabela em "Ver detalhes".
+        print("[tempo] etapa=rapida (sem Bedrock)")
         return {"resposta": frase_rapida(colunas, linhas), "grafico": None, "fala": None}
     rotulo = "Pergunta atual" if historico else "Pergunta"
     pediu_grafico = bool(PEDIU_GRAFICO.search(event["pergunta"]))
@@ -337,13 +355,17 @@ def lambda_handler(event, context):
         f"Resultado ({len(linhas)} linhas, colunas separadas por |):\n"
         f"{tabela_em_texto(colunas, linhas)}"
     )
+    inicio = time.perf_counter()
     resp = bedrock.converse(
         modelId=MODEL_ID,
         system=[{"text": SYSTEM + (INSTRUCOES_FALA if com_fala else "") + (INSTRUCOES_GRAFICO if pediu_grafico else "")}],
         messages=[{"role": "user", "content": [{"text": mensagem}]}],
-        inferenceConfig={"maxTokens": 4000},
+        inferenceConfig={"maxTokens": MAX_TOKENS},
         toolConfig=ferramenta(pediu_grafico, com_fala),
     )
+    tempo("bedrock", inicio)
+    uso = resp.get("usage", {})
+    print(f"[tokens] entrada={uso.get('inputTokens')} saida={uso.get('outputTokens')} linhas={len(linhas)}")
     conteudo = resp["output"]["message"]["content"]
     entrada = next((b["toolUse"]["input"] for b in conteudo if "toolUse" in b), {})
     # Se o modelo responder em texto, sem a ferramenta, o texto vira a resposta, sem gráfico.

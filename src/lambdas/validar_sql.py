@@ -1,4 +1,5 @@
 import re
+import time
 
 # Regras de validação do SQL gerado pelo Bedrock (slide 6 da aula de IA).
 TABELAS_PERMITIDAS = {"vw_precos_concorrentes", "vw_vendas", "vw_medicamentos",
@@ -53,5 +54,7 @@ def validar(sql):
 
 def lambda_handler(event, context):
     # Entrada: {"sql": "..."}  ->  Saída: {"valido": true/false, "erro": "..."}
+    inicio = time.perf_counter()
     erro = validar(event.get("sql", ""))
+    print(f"[tempo] etapa=validar {time.perf_counter() - inicio:.3f} s")
     return {"valido": erro is None, "erro": erro}

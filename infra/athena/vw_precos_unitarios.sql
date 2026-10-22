@@ -4,19 +4,27 @@
 --   quantidade, unidade, concentracao, forma e o preço por unidade.
 -- Para comparar farmácias: preco_comparacao (o Pix; se vazio, o cartão), preco_comparacao_origem
 --   ('pix' ou 'cartao') e preco_comparacao_por_unidade. A São João não informa Pix.
+-- Só a coleta mais recente de cada farmácia (filtrada pela partição dt logo no início, antes de
+--   qualquer cálculo). O histórico fica na vw_precos_concorrentes.
 -- Marca: escrita padronizada (acentos e maiúsculas certos); vazia, vem do mesmo EAN nas outras farmácias
 --   (coleta mais recente; a mais frequente; empate, ou nome citando outra marca, fica vazio).
 --   marca_origem: 'coleta' ou 'ean'.
 -- Quando a quantidade não aparece no nome, ela fica nula (o preço por unidade também): nunca é chutada.
 
 CREATE OR REPLACE VIEW t1_eq1_farmazids.vw_precos_unitarios AS
-WITH fonte AS (
+WITH ultima_coleta AS (
+  -- a coleta mais recente de cada farmácia, pela partição dt: tudo o que vem depois (marca, quantidade,
+  -- preço por unidade) só calcula essas linhas, e o Athena não lê as partições antigas
+  SELECT farmacia, max(dt) AS dt FROM t1_eq1_farmazids.vw_precos_concorrentes GROUP BY farmacia
+),
+fonte AS (
   SELECT c.*,
     CASE WHEN lower(trim(CAST(c.marca AS varchar))) IN ('', 'none', 'null', 'nan') THEN NULL
          ELSE trim(CAST(c.marca AS varchar)) END AS marca_lida,
     regexp_replace(trim(CAST(c.ean AS varchar)), '^0+', '') AS ean_n,
     ' ' || trim(regexp_replace(translate(lower(c.nome), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]+', ' ')) || ' ' AS nome_n
   FROM t1_eq1_farmazids.vw_precos_concorrentes c
+  JOIN ultima_coleta u ON u.farmacia = c.farmacia AND u.dt = c.dt
 ),
 grafias AS (
   -- a melhor grafia de cada marca: nada de nome longo todo em maiúsculas; depois a com mais acentos
@@ -41,14 +49,10 @@ marcas_conhecidas AS (
     WHERE v.nomes >= 5)
   WHERE palavras <> ''
 ),
-ultima_coleta AS (
-  SELECT farmacia, max(date(data_coleta)) AS dia FROM fonte GROUP BY farmacia
-),
 marcas_ean AS (
-  -- a marca de cada EAN em cada farmácia, na coleta mais recente dela
+  -- a marca de cada EAN em cada farmácia (a fonte já é só a coleta mais recente)
   SELECT DISTINCT f.farmacia, f.ean_n, g.marca_padrao
   FROM fonte f
-  JOIN ultima_coleta u ON u.farmacia = f.farmacia AND date(f.data_coleta) = u.dia
   JOIN grafias g ON g.chave = regexp_replace(translate(lower(f.marca_lida), 'áàâãäéèêëíìîïóòôõöúùûüç', 'aaaaaeeeeiiiiooooouuuuc'), '[^a-z0-9]', '')
   WHERE f.marca_lida IS NOT NULL AND f.ean_n <> ''
 ),

@@ -12,6 +12,7 @@ Recebe:  {"pergunta": "...", "historico": [...]}
 Devolve: {"resposta": "..."}
 """
 import os
+import time
 
 import boto3
 from botocore.config import Config
@@ -67,11 +68,15 @@ def lambda_handler(event, context):
     historico = [t for t in (event.get("historico") or []) if not (isinstance(t, dict) and "modo" in t)]
     rotulo = "Pergunta atual" if historico else "Pergunta"
     mensagem = f"{texto_historico(historico)}{rotulo}: {event['pergunta']}"
+    inicio = time.perf_counter()
     resp = bedrock.converse(
         modelId=MODEL_ID,
         system=[{"text": SYSTEM}],
         messages=[{"role": "user", "content": [{"text": mensagem}]}],
         inferenceConfig={"maxTokens": MAX_TOKENS},
     )
+    print(f"[tempo] etapa=bedrock {time.perf_counter() - inicio:.2f} s")
+    uso = resp.get("usage", {})
+    print(f"[tokens] entrada={uso.get('inputTokens')} saida={uso.get('outputTokens')}")
     texto = next(b["text"] for b in resp["output"]["message"]["content"] if "text" in b)
     return {"resposta": f"{texto.strip()}\n\n{AVISO}"}
