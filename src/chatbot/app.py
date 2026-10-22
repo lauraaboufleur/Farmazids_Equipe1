@@ -776,8 +776,8 @@ def escolher_principal(grupos, pergunta):
 def nome_apresentacao(grupo, remedio):
     """"Paracetamol 750 mg · comprimido"."""
     x = grupo[0]
-    if not remedio and "+" in (x["concentracao"] or "") and x["produto"]:
-        # Sem o nome do remédio, uma combinação viraria só números somados: usa o nome do produto.
+    if not remedio and x["produto"]:
+        # Sem o nome do remédio (busca pelo código de barras), o título é o nome do produto.
         return produto_curto(x["produto"])
     nome = " ".join(p for p in (remedio, concentracao_br(x["concentracao"]) if x["concentracao"] else None) if p)
     return " · ".join(p for p in (nome, unidade_br(x["forma"]) if x["forma"] else None) if p)
@@ -1054,6 +1054,20 @@ def oferta_de_precos(texto, pergunta):
         return {"rotulo": f"Ver preços de {remedio} {onde}",
                 "pergunta": f"Quais os preços {artigo} {remedio} {onde}?"}
     return {"rotulo": f"Ver preços {onde}", "pergunta": f"Quais os preços coletados {onde}?"}
+
+
+# Pergunta do leitor de código de barras ("Compare os preços do produto com código de barras <EAN>").
+EAN_DO_LEITOR = re.compile(r"codigo de barras (\d{8}|\d{13})\b")
+
+
+def texto_ean_nao_encontrado(texto, resultado, pergunta):
+    """Código de barras válido que não está em nenhuma farmácia nem na Farmazids: em vez de
+    "não foram encontrados dados", a explicação (sem afirmar que não é medicamento)."""
+    achado = EAN_DO_LEITOR.search(sem_acento(pergunta))
+    if not achado or (resultado.get("linhas") and resultado.get("tipo") != "sem_dados"):
+        return texto
+    return (f"Não encontramos o código de barras {achado.group(1)} em nenhuma farmácia. Ele pode não ser de um "
+            "medicamento ou não estar à venda nelas.")
 
 
 def pergunta_da_confirmacao(nova, mensagens):
@@ -1352,8 +1366,8 @@ def audio_da_fala(texto, destaque=None):
 
 
 def audio_sob_demanda(chave, fala, destaque):
-    """O Polly só é chamado quando a fala vai ser ouvida. O "Ouvir" (ou a leitura automática
-    de uma pergunta feita por voz) clica num botão escondido desta resposta; o app roda de
+    """O Polly só é chamado quando a fala vai ser ouvida. O "Ouvir" clica num botão escondido
+    desta resposta (nada é lido sozinho); o app roda de
     novo, e aqui o áudio é gerado e posto num player escondido, que o assets/voz.js toca.
     Depois disso, a resposta continua com o áudio (do cache, sem chamar o Polly de novo).
     Devolve a origem da voz: "polly" (áudio pronto), "sob-demanda" (o Polly será chamado
@@ -1591,9 +1605,9 @@ if st.session_state.pendente:
         st.session_state.pendente = None
 
     pergunta_atual = st.session_state.mensagens[-1]["texto"]
-    texto_resposta = padronizar_farmacias(texto_farmacias_sem_vendas(
+    texto_resposta = padronizar_farmacias(texto_ean_nao_encontrado(texto_farmacias_sem_vendas(
         texto_de_vendas(resultado["resposta"], resultado["colunas"], resultado["linhas"], resultado["sql"], pergunta_atual),
-        resultado, pergunta_atual, st.session_state.mensagens[:-1]))
+        resultado, pergunta_atual, st.session_state.mensagens[:-1]), resultado, pergunta_atual))
     st.session_state.mensagens.append({
         "papel": "assistant",
         "texto": texto_resposta,

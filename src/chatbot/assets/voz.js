@@ -1,6 +1,7 @@
 // Voz no chatbot da Farmazids:
 // - pesquisa por voz: botão de microfone na caixa de pergunta (reconhecimento de fala);
-// - leitura da resposta: botões "Ouvir" no rodapé das respostas. O áudio do Amazon Polly
+// - leitura da resposta: botões "Ouvir" no rodapé das respostas (nada é lido sozinho, nem
+//   quando a pergunta foi feita por voz). O áudio do Amazon Polly
 //   só é gerado quando vai ser ouvido: o "Ouvir" clica num botão escondido da resposta
 //   (.st-key-pedir-audio-N), o app.py gera o áudio e o põe num player escondido
 //   (.st-key-audio-N), e ele é tocado aqui. Se o Polly falhar, demorar demais ou o
@@ -16,14 +17,12 @@
   const Reconhecimento = window.SpeechRecognition || window.webkitSpeechRecognition;
   const sintese = window.speechSynthesis;
   const estado = {
-    lidas: new Set(),     // respostas que já existiam (não são lidas sozinhas)
     idLendo: null,        // resposta que está sendo lida agora
     audio: null,          // áudio do Polly tocando agora
     esperando: null,      // resposta cujo áudio foi pedido ao app e ainda não chegou
     leitura: 0,           // muda a cada leitura na voz do navegador: a antiga para de falar
     pausa: null,          // pausa entre duas frases da voz do navegador
     ouvindo: false,       // microfone ligado
-    porVoz: false,        // a última pergunta foi feita por voz: ler a resposta sozinha
   };
   window.farmazidsVoz = estado;
 
@@ -284,10 +283,7 @@
     };
     reconhecimento.onend = () => {
       marcarMic(false);
-      if (texto.trim()) {
-        estado.porVoz = true;
-        enviar(10);
-      }
+      if (texto.trim()) enviar(10);
     };
     try {
       reconhecimento.start();
@@ -313,25 +309,11 @@
   }
 
   // ---------- A cada mudança da página (o Streamlit redesenha tudo a cada interação) ----------
-  function respostasNovas() {
-    document.querySelectorAll(".voz-ouvir").forEach((botao) => {
-      const id = botao.dataset.id;
-      if (estado.lidas.has(id)) return;
-      estado.lidas.add(id);
-      if (estado.porVoz) {
-        estado.porVoz = false;
-        ler(botao); // pergunta feita por voz: a resposta é lida sozinha
-      }
-    });
-    if (estado.idLendo !== null) marcar(estado.idLendo, true); // o botão redesenhado volta a dizer "Parar"
-  }
-
-  document.querySelectorAll(".voz-ouvir").forEach((b) => estado.lidas.add(b.dataset.id));
   let agendado = false;
   function atualizar() {
     agendado = false;
     if (Reconhecimento) colocarMic();
-    respostasNovas();
+    if (estado.idLendo !== null) marcar(estado.idLendo, true); // o botão redesenhado volta a dizer "Parar"
   }
   new MutationObserver(() => {
     if (!agendado) {

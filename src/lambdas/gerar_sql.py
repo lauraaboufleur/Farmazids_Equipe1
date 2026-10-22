@@ -218,6 +218,41 @@ LEMBRETE_PRECO = (
     "modelo de comparação, com as mesmas colunas.)"
 )
 
+# A pergunta que o leitor de código de barras da tela manda (texto já sem acento).
+PERGUNTA_DO_LEITOR = re.compile(r"^compare os precos do produto com codigo de barras (\d{8}|\d{13})\s*\??$")
+
+
+def sql_comparacao_ean(ean):
+    """O SQL da comparação por código de barras, o mesmo modelo da REGRA_COMPARACAO (com a
+    Farmazids), filtrando pelo código sem zeros à esquerda. Montado aqui, sem o Bedrock."""
+    codigo = ean.lstrip("0")
+    filtro = "regexp_replace(trim(CAST({} AS varchar)), '^0+', '') = '" + codigo + "'"
+    return (
+        "WITH ultima AS (SELECT farmacia, max(date(data_coleta)) AS dia FROM vw_precos_unitarios GROUP BY farmacia), "
+        "precos AS (SELECT u.farmacia, u.nome, CAST(u.marca AS varchar) AS marca, u.concentracao, u.forma, "
+        "u.unidade, u.quantidade, u.preco_comparacao AS preco, "
+        "u.preco_comparacao_por_unidade AS preco_por_unidade, u.preco_comparacao_origem AS origem_preco, "
+        "CAST(u.em_estoque AS varchar) AS em_estoque, date(u.data_coleta) AS data_coleta "
+        "FROM vw_precos_unitarios u JOIN ultima ON ultima.farmacia = u.farmacia AND date(u.data_coleta) = ultima.dia "
+        f"WHERE {filtro.format('u.ean')} "
+        "UNION ALL SELECT 'farmazids', nome, CAST(NULL AS varchar), concentracao, forma, unidade, quantidade, "
+        "TRY_CAST(preco_farmazids AS double), preco_farmazids_por_unidade, CAST(NULL AS varchar), "
+        "CAST(NULL AS varchar), CAST(NULL AS date) "
+        f"FROM vw_precos_unitarios_farmazids WHERE {filtro.format('ean')}) "
+        "SELECT farmacia, COALESCE(min_by(nome, preco_por_unidade), min(nome)) AS produto, "
+        "min_by(marca, preco_por_unidade) AS marca, "
+        "min(preco_por_unidade) AS preco_por_unidade, "
+        "COALESCE(min_by(preco, preco_por_unidade), min(preco)) AS preco, "
+        "COALESCE(min_by(origem_preco, preco_por_unidade), min(origem_preco)) AS origem_preco, "
+        "COALESCE(min_by(quantidade, preco_por_unidade), min(quantidade)) AS quantidade, "
+        "concentracao, forma, unidade, "
+        "COALESCE(min_by(em_estoque, preco_por_unidade), max(em_estoque)) AS em_estoque, "
+        "max(data_coleta) AS data_coleta "
+        "FROM precos GROUP BY concentracao, forma, unidade, farmacia "
+        "ORDER BY concentracao, forma, unidade, preco_por_unidade NULLS LAST LIMIT 50"
+    )
+
+
 _schema_cache = None
 
 
@@ -319,6 +354,12 @@ def lambda_handler(event, context):
     pergunta = event["pergunta"]
     erro_anterior = event.get("erro_anterior") or ""
     historico = event.get("historico") or []
+
+    leitor = PERGUNTA_DO_LEITOR.match(sem_acento(pergunta).strip())
+    if leitor and not erro_anterior:
+        # Pergunta do leitor de código de barras: o SQL sai pronto, sem Bedrock (mais rápido e barato).
+        # Se ele for reprovado (erro_anterior), a correção volta para o caminho normal.
+        return {"sql": sql_comparacao_ean(leitor.group(1))}
 
     if eh_pergunta_de_vendas(pergunta):
         fora = farmacias_citadas(pergunta, FARMACIAS_SEM_VENDAS)

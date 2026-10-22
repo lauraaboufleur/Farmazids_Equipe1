@@ -28,6 +28,7 @@ para o backend entender perguntas como "e na São João?"; nunca vai para a tela
 import io
 import json
 import os
+import re
 import threading
 import time
 import wave
@@ -217,6 +218,16 @@ def _perguntar_simulado(pergunta, historico):
             "grafico": {"tipo": "barras", "x": "mes", "y": ["valor_estimado"], "serie": "farmacia",
                         "pedido": True} if pediu_grafico else None,
         }
+    codigo = re.search(r"código de barras (\d{13}|\d{8})(?!\d)", pergunta)
+    if codigo and codigo.group(1) != "7891058017392":
+        # Leitor de código de barras, código válido que não está em nenhuma farmácia: resultado vazio
+        # (a tela troca o texto pela explicação). Só o 7891058017392 é "encontrado" no modo simulado.
+        return {"ok": True, "resposta": "Não foram encontrados dados para esse produto.",
+                "sql": "WITH ultima AS (...) ... WHERE regexp_replace(trim(CAST(u.ean AS varchar)), '^0+', '') = "
+                       f"'{codigo.group(1)}' ... LIMIT 50",
+                "colunas": ["farmacia", "produto", "marca", "preco_por_unidade", "preco", "origem_preco",
+                            "quantidade", "concentracao", "forma", "unidade", "em_estoque", "data_coleta"],
+                "linhas": [], "tipo": "dados", "grafico": None}
     if "compar" in pergunta.lower() or "barat" in pergunta.lower():
         # Para testar a comparação por unidade (vw_precos_unitarios), no formato da gerar-sql:
         # paracetamol em 3 apresentações + 1 combinação, a Farmazids fora do top 3, um produto
@@ -232,7 +243,10 @@ def _perguntar_simulado(pergunta, historico):
             "ok": True,
             "resposta": f"- O paracetamol 750 mg sai mais barato na **FarmaPonte**, a R$ 0,34 por comprimido. "
                         f"A Farmazids fica em 5º lugar{contexto}.\n- Na apresentação de 500 mg, a São João vence.",
-            "sql": "WITH ultima AS (...) ... WHERE LOWER(u.nome) LIKE '%paracetamol%' ... LIMIT 50",
+            # Pelo leitor, o filtro é o código de barras (sem o nome do remédio no SQL).
+            "sql": ("WITH ultima AS (...) ... WHERE regexp_replace(trim(CAST(u.ean AS varchar)), '^0+', '') = "
+                    "'7891058017392' ... LIMIT 50") if codigo else
+                   "WITH ultima AS (...) ... WHERE LOWER(u.nome) LIKE '%paracetamol%' ... LIMIT 50",
             "colunas": ["farmacia", "produto", "marca", "preco_por_unidade", "preco", "origem_preco", "quantidade",
                         "concentracao", "forma", "unidade", "em_estoque", "data_coleta"],
             "linhas": [

@@ -502,6 +502,13 @@ html.ean-aberto, html.ean-aberto body { overflow: hidden; }
 }
 .ean-campo:focus { outline: 2px solid var(--dourado); outline-offset: 1px; }
 .ean-erro { margin: 0; min-height: 1.2em; color: var(--ean-erro); font-size: 0.9rem; text-align: center; }
+.ean-invalido { margin: 0; color: var(--ean-erro); font-size: 0.95rem; line-height: 1.4; text-align: center; }
+.ean-invalido[hidden], .ean-abrir-digitar[hidden] { display: none; }
+.ean-abrir-digitar {
+  padding: 3px 12px; border-radius: 999px; cursor: pointer; font: inherit; font-size: 13px;
+  color: var(--ean-texto); background: transparent; border: 1px solid var(--ean-borda);
+}
+.ean-abrir-digitar:hover { background: var(--balao-usuario); }
 .ean-buscar, .ean-fechar {
   height: 44px; padding: 0 22px; cursor: pointer;
   border-radius: 999px; font-size: 1rem;

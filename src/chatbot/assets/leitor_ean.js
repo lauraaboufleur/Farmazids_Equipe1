@@ -14,6 +14,10 @@
   const ZXING = "https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.1/umd/zxing-browser.min.js";
   const PERGUNTA = "Compare os preços do produto com código de barras ";
   const INTERVALO = 120; // ms entre duas tentativas de leitura
+  const INVALIDO_CAMERA = "Esse código não parece um código de barras válido. Tente de novo, com o código bem " +
+    "enquadrado, ou digite os números.";
+  const INVALIDO_DIGITADO = "Esse código não parece um código de barras válido. Confira os números (são 8 ou 13) " +
+    "e tente de novo.";
   const estado = {
     aberto: false,
     stream: null,      // câmera ligada
@@ -143,19 +147,32 @@
     digitar.addEventListener("submit", (evento) => {
       evento.preventDefault();
       const ean = normalizar(campo.value);
-      const tamanho = campo.value.replace(/\D/g, "").length;
       if (ean) lido(ean);
-      else if (tamanho === 8 || tamanho === 13) erro.textContent = "Código inválido: algum número não confere. Confira e tente de novo.";
-      else erro.textContent = "Código inválido: são 8 ou 13 números. Confira e tente de novo.";
+      else erro.textContent = INVALIDO_DIGITADO;
     });
 
     const fechar = elemento("button", "ean-fechar", "Fechar");
     fechar.type = "button";
     fechar.addEventListener("click", fecharJanela);
 
-    caixa.append(camera, instrucao, digitar, fechar);
+    // Código lido pela câmera, mas inválido: a mensagem aparece aqui e a câmera continua.
+    const invalido = elemento("p", "ean-invalido");
+    invalido.setAttribute("role", "alert");
+    invalido.hidden = true;
+    // "ou digite os números": abre o campo de digitar, com a câmera ainda ligada.
+    const abrirDigitar = elemento("button", "ean-abrir-digitar", "Digitar os números");
+    abrirDigitar.type = "button";
+    abrirDigitar.hidden = true;
+    abrirDigitar.addEventListener("click", () => {
+      motivo.textContent = "Digite o código de barras:";
+      digitar.hidden = false;
+      abrirDigitar.hidden = true;
+      campo.focus();
+    });
+
+    caixa.append(camera, instrucao, invalido, abrirDigitar, digitar, fechar);
     janela.appendChild(caixa);
-    return { janela, camera, video, instrucao, digitar, motivo, campo, fechar };
+    return { janela, camera, video, instrucao, invalido, abrirDigitar, digitar, motivo, campo, fechar };
   }
 
   function semCamera(texto) {
@@ -234,9 +251,22 @@
         codigos = [];
       }
       const ean = codigos.map(normalizar).find(Boolean);
-      if (ean) lido(ean);
-      else procurar(detectar, video);
+      if (ean) {
+        lido(ean);
+        return;
+      }
+      if (codigos.length) avisarInvalido(codigos[0]); // leu algo, mas não é um código de barras válido
+      procurar(detectar, video);
     }, INTERVALO);
+  }
+
+  function avisarInvalido(lido) {
+    const j = estado.janela;
+    if (!j) return;
+    console.info("[ean] código inválido lido:", lido);
+    j.invalido.textContent = INVALIDO_CAMERA;
+    j.invalido.hidden = false;
+    if (j.digitar.hidden) j.abrirDigitar.hidden = false;
   }
 
   function pararCamera() {
