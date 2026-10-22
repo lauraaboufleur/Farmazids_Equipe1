@@ -124,13 +124,20 @@
 .st-key-botao-tema {
   position: absolute; left: 0; top: 1.2rem; width: auto; z-index: 1;
 }
+/* Só o ícone (sol/lua), redondo e do tamanho do botão do leitor de código de barras (.ean-botao).
+   O texto "Claro"/"Escuro" continua no botão para leitores de tela, mas fica escondido. */
 .st-key-botao-tema button {
-  border-radius: 999px;
+  width: 42px; height: 42px; min-height: 42px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
   border: 1px solid var(--dourado);
   background: transparent;
   color: var(--cor-lema);
-  font-family: "Cinzel", serif; font-size: 0.8rem; letter-spacing: 0.08em;
 }
+.st-key-botao-tema button [data-testid="stMarkdownContainer"] {
+  position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+.st-key-botao-tema button span { margin: 0; }
 .st-key-botao-tema button:hover { border-color: var(--cor-lema); color: var(--cor-lema); background: var(--balao-usuario); }
 
 .subtitulo {
@@ -578,20 +585,175 @@ html.ean-aberto, html.ean-aberto body { overflow: hidden; }
 body:has([data-testid="stSidebar"][aria-expanded="true"]) .menu-botao,
 body:not(:has([data-testid="stSidebar"])) .menu-botao { display: none; }
 
-/* ---------- Acima da caixa de pergunta: o modo de resposta ---------- */
-.st-key-modo-resposta { margin-bottom: -6px; }
-/* !important: o estilo do Streamlit para o botão do seletor é mais específico que estes. */
-.st-key-modo-resposta button {
-  min-height: 30px; padding: 2px 12px; font-size: 13px;
-  background: var(--fundo-caixa) !important; color: var(--texto-assistente) !important;
-  border: 1px solid var(--divisoria-caixa) !important;
-}
-.st-key-modo-resposta button[aria-checked="false"]:hover { border-color: var(--cor-lema) !important; color: var(--cor-lema) !important; }
-.st-key-modo-resposta button[aria-checked="true"] {
-  background: var(--botao-enviar) !important; color: #FFFFFF !important; border-color: var(--botao-enviar) !important;
-}
-.st-key-modo-resposta button p { color: inherit; font-size: 13px; }
 @media (max-width: 640px) {
   .st-key-cabecalho [data-testid="stElementContainer"]:has(.menu-botao) { top: 0.4rem; right: 48px; }
   .menu-botao { width: 40px; height: 40px; font-size: 18px; }
+}
+
+/* ---------- ⚡ Resposta rápida, dentro da barra de pergunta (assets/voz.js) ---------- */
+.st-key-modo-rapido { display: none; }  /* o botão do Streamlit que o ⚡ aciona */
+.modo-rapido-botao {
+  position: absolute; right: 141px; top: 50%; transform: translateY(-50%);
+  width: 36px; height: 36px; border-radius: 50%; padding: 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--divisoria-caixa); background: transparent; color: var(--cor-hora);
+}
+.modo-rapido-botao:hover { border-color: var(--dourado); color: var(--cor-lema); }
+.modo-rapido-botao.aceso {
+  border-color: transparent; color: #FFF8EC;
+  background: radial-gradient(circle at 35% 30%, #E9C98A, #B8873E);
+}
+.modo-rapido-botao:focus-visible { outline: 2px solid var(--roxo); outline-offset: 2px; }
+[data-testid="stChatInput"]:not(:has(.voz-mic)) .modo-rapido-botao { right: 99px; }
+[data-testid="stChatInput"]:has(.modo-rapido-botao) [data-testid="stChatInputTextArea"] { padding-right: 46px; }
+[data-testid="stChatInput"]:has(.modo-rapido-botao):has(.voz-mic) [data-testid="stChatInputTextArea"] { padding-right: 88px; }
+[data-testid="stChatInput"]:has(textarea:disabled) .modo-rapido-botao { display: none; }
+
+/* ---------- PDF de uma resposta: botão ao lado do "Ouvir" ---------- */
+.pdf-botao {
+  margin-left: 6px; padding: 1px 9px; border-radius: 999px; cursor: pointer;
+  display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;
+  font: inherit; font-size: 12px; line-height: 1.6;
+  color: var(--cmp-titulo); background: transparent; border: 1px solid var(--cmp-borda);
+}
+.pdf-botao::before {
+  content: ""; width: 12px; height: 12px; background: currentColor;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 10l5 5 5-5M5 20h14'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 10l5 5 5-5M5 20h14'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+.pdf-botao:hover, .pdf-botao:focus-visible { background: var(--cmp-n-fundo); }
+@media (max-width: 640px) {
+  .modo-rapido-botao { right: 111px; width: 28px; height: 28px; }
+  .modo-rapido-botao svg { width: 14px; height: 14px; }
+  [data-testid="stChatInput"]:not(:has(.voz-mic)) .modo-rapido-botao { right: 78px; }
+  [data-testid="stChatInput"]:has(.modo-rapido-botao) [data-testid="stChatInputTextArea"] { padding-right: 34px; }
+  [data-testid="stChatInput"]:has(.modo-rapido-botao):has(.voz-mic) [data-testid="stChatInputTextArea"] { padding-right: 66px; }
+  /* O texto de exemplo cabe numa linha (o que a pessoa digita continua com 16 px: o iPhone não dá zoom). */
+  [data-testid="stChatInputTextArea"]::placeholder { font-size: 14px; }
+  .st-key-botao-tema button { width: 40px; height: 40px; min-height: 40px; }
+  .pdf-botao span { display: none; }  /* no celular, só o ícone */
+  .pdf-botao { padding: 3px 7px; }
+}
+
+/* ---------- Só no PDF ---------- */
+.so-impressao, .st-key-impressao-logo { display: none; }
+/* Cópia clara do gráfico (modo escuro): desenhada fora da tela, com largura de verdade. */
+[class*="st-key-grafico-impressao-"] { position: absolute; left: -10000px; top: 0; width: 760px; }
+
+@media print {
+  @page { size: A4; margin: 12mm; }
+  /* Papel branco e cores do modo claro, mesmo no modo escuro. */
+  html.imprimindo {
+    --roxo: #482960 !important;
+    --roxo-escuro: #351A4D !important;
+    --dourado: #C2A05A !important;
+    --dourado-claro: #E3CFA0 !important;
+    --creme: #FBF6EE !important;
+    --lilas: #F1EAF6 !important;
+    --texto: #2E1F3E !important;
+    --fundo: var(--creme) !important;
+    --linha-cabecalho: #E8DCC4 !important;
+    --cor-lema: #B8924A !important;
+    --cor-subtitulo: var(--roxo) !important;
+    --cor-aviso: #9A7A3E !important;
+    --balao-assistente: var(--lilas) !important;
+    --borda-assistente: #E6DAEE !important;
+    --texto-assistente: var(--roxo) !important;
+    --negrito-assistente: var(--roxo-escuro) !important;
+    --balao-usuario: #FBF1E0 !important;
+    --borda-usuario: #D9BF8A !important;
+    --cor-hora: #8A7A99 !important;
+    --cor-pontos: var(--roxo) !important;
+    --fundo-caixa: #FFFDF8 !important;
+    --divisoria-caixa: #E3D3B0 !important;
+    --botao-enviar: var(--roxo) !important;
+    --ean-barras: var(--roxo) !important;
+    --ean-fundo-janela: rgba(46, 31, 62, 0.72) !important;
+    --ean-caixa: #FFFDF8 !important;
+    --ean-borda: #E3D3B0 !important;
+    --ean-texto: var(--roxo) !important;
+    --ean-erro: #B5533C !important;
+    --lateral-fundo: #F5EDDF !important;
+    --lateral-botao: #FFFDF8 !important;
+    --lateral-borda: #E3D3B0 !important;
+    --aviso-vendas-fundo: #FDF3E1 !important;
+    --aviso-vendas-borda: #C2A05A !important;
+    --aviso-vendas-texto: #7A5418 !important;
+    --cmp-frase: #2E1F3E !important;
+    --cmp-negrito: #351A4D !important;
+    --cmp-cartao: #FFFFFF !important;
+    --cmp-borda: #E6DAEE !important;
+    --cmp-divisoria: #F4EEF8 !important;
+    --cmp-titulo: #482960 !important;
+    --cmp-suave: #8A7A99 !important;
+    --cmp-texto: #2E1F3E !important;
+    --cmp-vermelho: #B5533C !important;
+    --cmp-n1-fundo: #C2A05A !important;
+    --cmp-n1-texto: #FFFFFF !important;
+    --cmp-n-fundo: #F1EAF6 !important;
+    --cmp-n-texto: #482960 !important;
+    --cmp-sua-fundo: #FBF7FD !important;
+    --cmp-sua-nome: #482960 !important;
+    --cmp-sua-n-fundo: #482960 !important;
+    --cmp-sua-n-texto: #FFFFFF !important;
+    --cmp-botao-fundo: rgba(255, 255, 255, 0.6) !important;
+  }
+  html.imprimindo, html.imprimindo body, html.imprimindo .stApp, html.imprimindo [data-testid="stMain"] {
+    background: #FFFFFF !important; color: #2E1F3E !important;
+  }
+  /* Fora do PDF: coluna lateral, cabeçalho, seletor Chat/Dashboard, barra de pergunta, botões e as
+     outras mensagens. */
+  html.imprimindo [data-testid="stSidebar"],
+  html.imprimindo [data-testid="stBottom"],
+  html.imprimindo [data-testid="stLayoutWrapper"]:has(> .st-key-cabecalho),
+  html.imprimindo .st-key-seletor-pagina,
+  html.imprimindo [class*="st-key-msg-"]:not(.imprimir-esta),
+  html.imprimindo .imprimir-esta [data-testid="stChatMessageAvatarCustom"],
+  html.imprimindo .imprimir-esta [data-testid="stChatMessage"] > img,
+  html.imprimindo .voz-ouvir, html.imprimindo .pdf-botao, html.imprimindo .oferta-botao,
+  html.imprimindo .menu-botao, html.imprimindo .voz-aviso,
+  html.imprimindo .imprimir-esta [data-testid="stDataFrame"],
+  html.imprimindo .imprimir-esta [data-testid="stExpander"] summary { display: none !important; }
+  html.imprimindo [data-testid="stMainBlockContainer"] { max-width: 100% !important; padding: 0 !important; }
+  /* Sem o vão que os elementos escondidos (outras mensagens, scripts) deixariam entre o logo e a resposta. */
+  html.imprimindo [data-testid="stMainBlockContainer"] > div > [data-testid="stVerticalBlock"] { gap: 0.5rem !important; }
+  html.imprimindo [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:has(> .stHtml:empty),
+  html.imprimindo [data-testid="stLayoutWrapper"]:has(> [class*="st-key-msg-"]:not(.imprimir-esta)) { display: none !important; }
+  html.imprimindo .st-key-impressao-logo { display: block !important; margin-bottom: 8px; }
+  html.imprimindo .imprimir-esta .so-impressao { display: block !important; }
+  /* A resposta inteira, sem balão nem bordas. */
+  html.imprimindo .imprimir-esta [data-testid="stChatMessage"],
+  html.imprimindo .imprimir-esta [data-testid="stChatMessageContent"],
+  html.imprimindo .imprimir-esta [data-testid="stExpander"],
+  html.imprimindo .imprimir-esta [data-testid="stExpander"] details {
+    background: #FFFFFF !important; border: 0 !important; box-shadow: none !important; padding: 0 !important; margin: 0 !important;
+  }
+  html.imprimindo .imprimir-esta, html.imprimindo .imprimir-esta * { color-adjust: exact; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* No modo escuro, o gráfico escuro sai e entra a cópia clara. */
+  html.imprimindo .imprimir-esta [class*="st-key-grafico-impressao-"] { position: static !important; width: 100% !important; }
+  html.imprimindo .imprimir-esta:has([class*="st-key-grafico-impressao-"]) [class*="st-key-grafico-"]:not([class*="st-key-grafico-impressao-"]) { display: none !important; }
+  /* Topo: a pergunta e a data. */
+  .impressao-topo { margin: 0 0 10px; padding-bottom: 8px; border-bottom: 1px solid #E3D3B0; }
+  .impressao-topo p { margin: 0; }
+  .impressao-rotulo { font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: #9A7A3E !important; }
+  .impressao-pergunta { font-size: 15px; font-weight: 600; color: #351A4D !important; }
+  .impressao-data { margin-top: 4px !important; font-size: 11px; color: #6B5C7A !important; }
+  /* A tabela inteira: todas as colunas cabem na página, nomes quebram linha. */
+  .tabela-impressao { margin: 10px 0; }
+  .tabela-impressao table { width: 100%; border-collapse: collapse; table-layout: auto; font-size: 9.5px; }
+  .tabela-impressao th, .tabela-impressao td {
+    border: 1px solid #E6DAEE; padding: 3px 5px; text-align: left; vertical-align: top;
+    white-space: normal; overflow-wrap: break-word; hyphens: manual; color: #2E1F3E !important;
+  }
+  .tabela-impressao th { background: #F1EAF6 !important; font-weight: 600; }
+  .tabela-impressao tr { break-inside: avoid; }
+  .cmp-cartao, .aviso-vendas, [data-testid="stVegaLiteChart"] { break-inside: avoid; }
+}
+/* Celular estreito (360 px, muitos Android): o texto de exemplo ainda cabe numa linha. */
+@media (max-width: 375px) {
+  [data-testid="stChatInputTextArea"]::placeholder {
+    font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  [data-testid="stChatInput"]:has(.modo-rapido-botao):has(.voz-mic) [data-testid="stChatInputTextArea"] { padding-right: 62px; }
+  .modo-rapido-botao { right: 108px; width: 26px; height: 26px; }
 }

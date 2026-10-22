@@ -29,6 +29,8 @@
 
   // O sinal de menor vai escrito como \x3c: se o texto do script tiver esse sinal seguido de
   // letra ou barra, o Streamlit (DOMPurify) apaga o script inteiro.
+  const RAIO = '\x3csvg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">' +
+    '\x3cpath d="M13.5 2 4.5 13.5h6L9.5 22l9-11.5h-6z"/>\x3c/svg>';
   const MIC = '\x3csvg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" ' +
     'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
     '\x3crect x="9" y="3" width="6" height="11" rx="3"/>\x3cpath d="M5 11a7 7 0 0 0 14 0"/>' +
@@ -309,6 +311,66 @@
     }
   }
 
+  // ---------- ⚡ Resposta rápida (dentro da barra de pergunta, à esquerda do microfone) ----------
+  // O app.py guarda o modo; aqui o botão só mostra o estado (marcador .modo-estado) e, no clique, aciona
+  // o botão escondido que liga e desliga o modo (.st-key-alternar-modo).
+  function colocarRapido() {
+    const caixa = document.querySelector('[data-testid="stChatInput"]');
+    const marcador = document.querySelector(".modo-estado");
+    if (!caixa) return;
+    let botao = caixa.querySelector(".modo-rapido-botao");
+    if (!botao) {
+      botao = document.createElement("button");
+      botao.type = "button";
+      botao.className = "modo-rapido-botao";
+      botao.title = "Resposta rápida";
+      botao.setAttribute("aria-label", "Resposta rápida");
+      botao.innerHTML = RAIO;
+      botao.addEventListener("click", (evento) => {
+        evento.preventDefault();
+        const texto = document.querySelector('[data-testid="stChatInputTextArea"]');
+        const alternar = document.querySelector(".st-key-alternar-modo button");
+        if (!alternar || alternar.disabled || (texto && texto.disabled)) {
+          avisar("Aguarde a resposta e tente de novo.");
+          return;
+        }
+        alternar.click();
+      });
+      caixa.appendChild(botao);
+    }
+    const aceso = !!marcador && marcador.dataset.rapido === "1";
+    if (botao.classList.contains("aceso") !== aceso) botao.classList.toggle("aceso", aceso);
+    if (botao.getAttribute("aria-pressed") !== String(aceso)) botao.setAttribute("aria-pressed", String(aceso));
+  }
+
+  // ---------- PDF de uma resposta ----------
+  // Marca a resposta (imprimir-esta), abre o que estiver recolhido nela (tabela, detalhes) e chama o
+  // "Salvar como PDF" do navegador; o @media print do estilo.css esconde todo o resto.
+  function imprimirResposta(botao) {
+    const resposta = botao.closest('[class*="st-key-msg-"]');
+    if (!resposta) return;
+    document.querySelectorAll(".imprimir-esta").forEach((r) => r.classList.remove("imprimir-esta"));
+    resposta.classList.add("imprimir-esta");
+    document.documentElement.classList.add("imprimindo");
+    const fechados = Array.from(resposta.querySelectorAll("details:not([open])"));
+    fechados.forEach((d) => { d.open = true; });
+    const terminar = () => {
+      window.removeEventListener("afterprint", terminar);
+      document.documentElement.classList.remove("imprimindo");
+      resposta.classList.remove("imprimir-esta");
+      fechados.forEach((d) => { d.open = false; });
+    };
+    window.addEventListener("afterprint", terminar);
+    setTimeout(() => window.print(), 250); // tempo para o que foi aberto se desenhar
+  }
+
+  document.addEventListener("click", (evento) => {
+    const botao = evento.target.closest && evento.target.closest(".pdf-botao");
+    if (!botao) return;
+    evento.preventDefault();
+    imprimirResposta(botao);
+  });
+
   function colocarMic() {
     const caixa = document.querySelector('[data-testid="stChatInput"]');
     if (!caixa || caixa.querySelector(".voz-mic")) return;
@@ -330,6 +392,7 @@
   function atualizar() {
     agendado = false;
     if (Reconhecimento) colocarMic();
+    colocarRapido();
     if (estado.idLendo !== null) marcar(estado.idLendo, true); // o botão redesenhado volta a dizer "Parar"
   }
   new MutationObserver(() => {

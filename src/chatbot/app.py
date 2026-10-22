@@ -288,9 +288,6 @@ ATALHOS = [
         ("Vendas por mês", "Vendas de cada farmácia por mês no 1º semestre de 2026"),
     ]),
 ]
-# Seletor de modo junto da caixa de pergunta: rótulo -> modo enviado ao backend.
-MODOS = {"⚡ Rápida": "rapida", "Completa": "completa"}
-MODO_PADRAO = "Completa"
 
 
 def instalar_scripts():
@@ -603,7 +600,7 @@ def dados_do_grafico(sugestao, colunas, linhas):
     return (pontos, menor) if len(pontos) >= 2 else None
 
 
-def montar_grafico(mensagem):
+def montar_grafico(mensagem, escuro=None):
     """Gráfico de barras ou de linha com as cores da Farmazids. Devolve None
     quando não há gráfico para mostrar; nunca dá erro na tela."""
     sugestao = mensagem.get("grafico")
@@ -616,7 +613,8 @@ def montar_grafico(mensagem):
         return None
     pontos, menor = dados
 
-    cores = CORES_GRAFICO["escuro" if modo_escuro() else "claro"]
+    # escuro=False: as cores claras mesmo no modo escuro (o gráfico do PDF, que sai em papel branco).
+    cores = CORES_GRAFICO["escuro" if (modo_escuro() if escuro is None else escuro) else "claro"]
     dinheiro = any(em_dinheiro(y) for y in sugestao["y"])
     unidade = unidade_unica(mensagem.get("colunas") or [], mensagem.get("linhas") or [])
     titulo_y = (nome_coluna(sugestao["y"][0], unidade) if len(sugestao["y"]) == 1
@@ -1469,7 +1467,34 @@ def rodape(mensagem, coleta=None, chave=None, fala="", origem=""):
         texto += (f" <button type='button' class='voz-ouvir' data-id='{chave}' data-origem='{origem}' "
                   f"title='{html.escape(dica, quote=True)}' "
                   f"data-fala='{html.escape(fala, quote=True)}'>🔊 Ouvir</button>")
+    if chave is not None and chave != "inicio":
+        # Abre o "Salvar como PDF" do navegador só com esta resposta (assets/voz.js e @media print).
+        texto += (" <button type='button' class='pdf-botao' title='Salvar esta resposta em PDF' "
+                  "aria-label='Salvar esta resposta em PDF'><span>PDF</span></button>")
     return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
+
+
+def html_topo_impressao(mensagem, coleta=None):
+    """Só no PDF, no alto da resposta: a pergunta, a data e a hora e, na comparação, a data da coleta."""
+    pergunta = mensagem.get("pergunta") or ""
+    quando = f"Resposta de {mensagem.get('data') or datetime.now(FUSO).strftime('%d/%m/%Y')} às {mensagem['hora']}"
+    if coleta:
+        quando += f" · Coleta de {coleta}"
+    return ("<div class='so-impressao impressao-topo'>"
+            + (f"<p class='impressao-rotulo'>Pergunta</p><p class='impressao-pergunta'>{html.escape(pergunta)}</p>"
+               if pergunta else "")
+            + f"<p class='impressao-data'>{html.escape(quando)}</p></div>")
+
+
+def html_tabela_impressao(mensagem):
+    """A tabela completa em HTML, só no PDF: a da tela é desenhada em canvas, que sai cortada (colunas
+    e linhas fora da área visível). Aqui vão todas, com os mesmos rótulos e números formatados."""
+    try:
+        tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"]).hide(axis="index")
+        return f"<div class='so-impressao tabela-impressao'>{tabela.to_html(exclude_styles=True)}</div>"
+    except Exception as erro:  # o PDF sem tabela é melhor que a resposta com erro
+        print(f"[chatbot] tabela do PDF: {erro!r}")
+        return ""
 
 
 def mostrar(mensagem, chave):
@@ -1483,6 +1508,9 @@ def mostrar(mensagem, chave):
             rapida = papel == "assistant" and mensagem.get("modo") == "rapida"
             comparacao = ler_comparacao(mensagem) if papel == "assistant" and mensagem.get("colunas") \
                 and not rapida else None
+            if papel == "assistant" and chave != "inicio":
+                # Só no PDF (botão "PDF" do rodapé): a pergunta, a data e a hora no alto da resposta.
+                st.html(html_topo_impressao(mensagem, comparacao and comparacao["coleta"]))
             if comparacao:
                 st.html(html_frase(mensagem["texto"]) + html_comparacao(comparacao))
             else:
@@ -1499,6 +1527,7 @@ def mostrar(mensagem, chave):
                         st.html(aviso)
                     st.dataframe(montar_tabela(mensagem["colunas"], mensagem["linhas"]), hide_index=True,
                                  width="stretch", column_config=larguras(mensagem["colunas"]))
+                st.html(html_tabela_impressao(mensagem))  # a tabela inteira, só no PDF
             # Com zero linhas não há tabela nem gráfico (nada de tabela vazia com "empty").
             elif mensagem.get("colunas") and mensagem.get("linhas"):
                 tabela = montar_tabela(mensagem["colunas"], mensagem["linhas"])
@@ -1510,6 +1539,7 @@ def mostrar(mensagem, chave):
                         st.dataframe(tabela, hide_index=True, width="stretch", column_config=larguras(mensagem["colunas"]))
                 else:
                     st.dataframe(tabela, hide_index=True, width="stretch", column_config=larguras(mensagem["colunas"]))
+                st.html(html_tabela_impressao(mensagem))  # a tabela inteira, só no PDF
                 # Gráfico só quando a pergunta pediu; aí ele já aparece aberto.
                 grafico = montar_grafico(so_grupo_principal(mensagem, comparacao)) \
                     if mensagem.get("pediu_grafico") else None
@@ -1517,6 +1547,12 @@ def mostrar(mensagem, chave):
                     with st.expander("Ver gráfico", expanded=True,
                                      icon=":material/bar_chart:", key=f"grafico-{chave}"):
                         st.altair_chart(grafico, theme=None, width="stretch")
+                    if modo_escuro():
+                        # O PDF sai em papel branco: no modo escuro, uma cópia com as cores claras, fora
+                        # da tela (desenhada com largura de verdade, para aparecer inteira na impressão).
+                        with st.container(key=f"grafico-impressao-{chave}"):
+                            st.altair_chart(montar_grafico(so_grupo_principal(mensagem, comparacao), escuro=False),
+                                            theme=None, width="stretch")
             # "Ouvir" só nas respostas (não na pergunta nem nas boas-vindas).
             fala, origem = "", ""
             if papel == "assistant" and chave != "inicio":
@@ -1580,28 +1616,21 @@ def desenhar_coluna_lateral():
                 f"<div class='lateral-rodape'>{quando}4 farmácias + Farmazids</div>")
 
 
-def desenhar_rodape_da_caixa():
-    """Logo acima da caixa de pergunta: o seletor de modo. O rodapé tem sempre os mesmos
-    elementos, na mesma ordem: se algo aparecer só às vezes, enquanto a resposta é processada
-    o Streamlit mostra a versão antiga e a nova juntas (duas caixas de pergunta)."""
-    with st._bottom:
-        with st.container(key="modo-resposta"):
-            st.segmented_control(
-                "Modo de resposta", list(MODOS), key="modo_escolha", on_change=escolher_modo,
-                label_visibility="collapsed", disabled=st.session_state.pendente is not None,
-            )
+def alternar_modo():
+    st.session_state.modo_rapido = not st.session_state.modo_rapido
 
 
-def escolher_modo():
-    # Clicar na opção marcada desmarcaria: aí ela volta, e a escolha fica a mesma.
-    if st.session_state.modo_escolha is None:
-        st.session_state.modo_escolha = st.session_state.modo_resposta
-    else:
-        st.session_state.modo_resposta = st.session_state.modo_escolha
+def desenhar_controle_modo():
+    """O ⚡ fica dentro da barra de pergunta (assets/voz.js o põe lá). Ele clica neste botão escondido,
+    que liga e desliga o modo rápido; o estado vai para a tela num marcador (data-rapido)."""
+    with st.container(key="modo-rapido"):
+        st.button("Resposta rápida", key="alternar-modo", on_click=alternar_modo,
+                  disabled=st.session_state.pendente is not None)
+        st.html(f"<div class='modo-estado' data-rapido='{1 if st.session_state.modo_rapido else 0}'></div>")
 
 
 def modo_atual():
-    return MODOS.get(st.session_state.get("modo_resposta"), "completa")
+    return "rapida" if st.session_state.get("modo_rapido") else "completa"
 
 
 def responder(pergunta, historico, modo="completa"):
@@ -1634,9 +1663,8 @@ if "hora_inicio" not in st.session_state:
     st.session_state.hora_inicio = agora()
 if "pendente" not in st.session_state:
     st.session_state.pendente = None  # pergunta esperando resposta
-if "modo_resposta" not in st.session_state:
-    st.session_state.modo_resposta = MODO_PADRAO  # "⚡ Rápida" ou "Completa", lembrado na sessão
-    st.session_state.modo_escolha = MODO_PADRAO
+if "modo_rapido" not in st.session_state:
+    st.session_state.modo_rapido = False  # ⚡ na barra de pergunta: aceso = resposta rápida (lembrado na sessão)
 
 aplicar_estilo()
 pedir_login()
@@ -1671,6 +1699,10 @@ with st.container(key="cabecalho"):
             "<p class='aviso-simulado'>Modo simulado: respostas de teste, sem consultar a AWS.</p>",
             unsafe_allow_html=True,
         )
+
+# Logo do PDF de uma resposta: escondido na tela, aparece só na impressão (ver @media print).
+with st.container(key="impressao-logo"):
+    st.image(TITULO, width=230)
 
 # ---------- Chat ou Dashboard ----------
 # Bloqueado enquanto uma resposta está a caminho, como o botão do tema: trocar de
@@ -1708,7 +1740,7 @@ if pagina == "Dashboard":
 
 # ---------- Atalhos ----------
 desenhar_coluna_lateral()
-desenhar_rodape_da_caixa()
+desenhar_controle_modo()
 
 # ---------- Conversa ----------
 # Redesenha a conversa inteira a cada interação (é assim que o Streamlit funciona).
@@ -1770,5 +1802,6 @@ if st.session_state.pendente:
         "duracao": resultado.get("duracao"),
         "do_cache": resultado.get("do_cache", False),
         "hora": agora(),
+        "data": datetime.now(FUSO).strftime("%d/%m/%Y"),  # para o PDF
     })
     st.rerun()  # desbloqueia a caixa e mostra a resposta
