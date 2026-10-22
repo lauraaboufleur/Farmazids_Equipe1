@@ -1,8 +1,8 @@
 """Dados do dashboard da Farmazids.
 
 Aqui ficam as consultas no Athena e as contas; nada de tela (a tela é o dashboard.py).
-O dashboard não passa pelo Bedrock: roda SQL fixo direto no Athena, poucas consultas
-grandes de uma vez, e o resto é filtrado no pandas. Os dados mudam 1 vez por dia
+O dashboard não passa pelo Bedrock: pede poucas consultas grandes, de SQL fixo, à Lambda
+t1-eq1-dashboard-dados (pelo Step Functions, como o chat), e o resto é filtrado no pandas. Os dados mudam 1 vez por dia
 (as tabelas novas chegam e a vw_precos_unitarios é recriada às 13:30), então o
 dashboard.py guarda o resultado até a próxima atualização.
 
@@ -10,23 +10,23 @@ No modo simulado (CHATBOT_MODO_SIMULADO, o mesmo do chatbot), os dados são inve
 aqui mesmo, sem consultar a AWS.
 """
 
+import base64
+import gzip
 import io
+import json
 import os
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pandas as pd
 
 REGIAO = os.environ.get("AWS_REGION", "us-east-2")
-BANCO = os.environ.get("GLUE_DATABASE", "t1_eq1_farmazids")
-WORKGROUP = os.environ.get("ATHENA_WORKGROUP", "primary")
-PASTA_RESULTADOS = os.environ.get("DASHBOARD_ATHENA_OUTPUT", "s3://farmazids-t1-equipe1/athena-results/dashboard/")
-# O usuário das chaves do Streamlit (treinamento1-leitor-dados) não pode usar o Athena, e as
-# permissões dele não podem ser mudadas. Então o dashboard "veste" esta role, que confia nesse
-# usuário e tem as permissões do iam-policy-dashboard.json. Vazio = usa as chaves direto.
-ROLE_DASHBOARD = os.environ.get("DASHBOARD_ROLE_ARN", "arn:aws:iam::906513713169:role/t1-eq1-dashboard-leitura")
+# O usuário das chaves do Streamlit só pode rodar fluxos do Step Functions (não o Athena direto).
+# Então o dashboard segue o mesmo caminho do chat: esta state machine chama a Lambda
+# t1-eq1-dashboard-dados, que roda as consultas fixas no Athena e devolve o resultado.
+STATE_MACHINE = os.environ.get("DASHBOARD_STATE_MACHINE_ARN",
+                               "arn:aws:states:us-east-2:906513713169:stateMachine:t1-eq1-dashboard")
 
 SEM_ESTOQUE = 9999876  # "preço" que a São Paulo grava quando está fora de estoque
 FARMACIAS_COM_VENDAS = ["farmazids", "farmaponte", "veracruz"]  # a base de vendas só tem essas
@@ -44,92 +44,33 @@ EMPATE = 0.005
 DESCONTO_PROMOCAO = 0.05
 
 # ---------- Consultas ----------
-# Como na gerar-sql: na vw_vendas o código de barras é ean_gtin e a quantidade pode vir como texto.
-DATA_VENDA = "date(data_venda)"
-QUANTIDADE = "TRY_CAST(quantidade_vendida AS double)"
-
-CONSULTAS = {
-    # Unidades vendidas por farmácia, produto e mês.
-    "vendas": f"""
-        SELECT lower(farmacia) AS farmacia, CAST(ean_gtin AS varchar) AS ean,
-               CAST(date_trunc('month', {DATA_VENDA}) AS varchar) AS mes,
-               sum({QUANTIDADE}) AS unidades, count(*) AS vendas
-        FROM vw_vendas
-        GROUP BY 1, 2, 3""",
-    # Unidades por farmácia, ano e dia da semana (1 = segunda ... 7 = domingo).
-    "semana": f"""
-        SELECT lower(farmacia) AS farmacia, year(d) AS ano, day_of_week(d) AS dia_semana,
-               sum(q) AS unidades
-        FROM (SELECT farmacia, {QUANTIDADE} AS q, {DATA_VENDA} AS d FROM vw_vendas)
-        GROUP BY 1, 2, 3""",
-    "ultima_venda": f"SELECT CAST(max({DATA_VENDA}) AS varchar) AS ultima FROM vw_vendas",
-    # Preço mais recente de cada farmácia e produto.
-    "precos": """
-        SELECT farmacia, ean, nome, marca, categorias, preco_sem_desconto, preco_cartao, preco_pix,
-               em_estoque, data_coleta
-        FROM (
-            SELECT lower(farmacia) AS farmacia, CAST(ean AS varchar) AS ean, nome, marca,
-                   array_join(categorias, '|') AS categorias,
-                   preco_sem_desconto, preco_cartao, preco_pix,
-                   CAST(em_estoque AS varchar) AS em_estoque, CAST(data_coleta AS varchar) AS data_coleta,
-                   row_number() OVER (PARTITION BY lower(farmacia), CAST(ean AS varchar)
-                                      ORDER BY data_coleta DESC) AS n
-            FROM vw_precos_concorrentes)
-        WHERE n = 1""",
-    "medicamentos": "SELECT CAST(ean AS varchar) AS ean, nome, preco_farmazids FROM vw_medicamentos",
-}
-
-# Histórico de preço de um produto (aba Consulta de produto): um ponto por farmácia e dia.
-CONSULTA_HISTORICO = """
-    SELECT lower(farmacia) AS farmacia, CAST(date(data_coleta) AS varchar) AS dia,
-           min(preco_pix) AS preco_pix, min(preco_cartao) AS preco_cartao,
-           min(CASE WHEN preco_sem_desconto <> 9999876 THEN preco_sem_desconto END) AS preco_sem_desconto
-    FROM vw_precos_concorrentes
-    WHERE regexp_replace(CAST(ean AS varchar), '^0+', '') = '{ean}'
-    GROUP BY 1, 2"""
-
+# O SQL fica na Lambda t1-eq1-dashboard-dados; aqui vão só os nomes das consultas.
+CONSULTAS = ["vendas", "semana", "ultima_venda", "precos", "medicamentos"]
 NUMERICAS = {"unidades", "vendas", "ano", "dia_semana", "preco_sem_desconto", "preco_cartao", "preco_pix",
              "preco_farmazids"}
 
 
-def clientes():
-    """Clientes do Athena e do S3, com as permissões da role do dashboard (credenciais
-    temporárias de 1 hora, pedidas de novo a cada carga)."""
+def chamar(stepfunctions, pedido):
+    """Uma execução da state machine do dashboard; devolve a resposta da Lambda."""
+    resposta = stepfunctions.start_sync_execution(stateMachineArn=STATE_MACHINE, input=json.dumps(pedido))
+    if resposta["status"] != "SUCCEEDED":
+        raise RuntimeError(f"Step Functions {resposta['status']}: {resposta.get('error')} {resposta.get('cause')}")
+    return json.loads(resposta["output"])
+
+
+def rodar(nome, ean=None, stepfunctions=None):
+    """Roda uma consulta pelo nome e devolve um DataFrame (tudo como texto, menos as colunas de
+    NUMERICAS). O resultado vem compactado e em partes (limite de 256 KB do Step Functions)."""
     import boto3  # só no modo real
 
-    if not ROLE_DASHBOARD:
-        return boto3.client("athena", region_name=REGIAO), boto3.client("s3", region_name=REGIAO)
-    chaves = boto3.client("sts", region_name=REGIAO).assume_role(
-        RoleArn=ROLE_DASHBOARD, RoleSessionName="dashboard-streamlit")["Credentials"]
-    sessao = boto3.Session(aws_access_key_id=chaves["AccessKeyId"], aws_secret_access_key=chaves["SecretAccessKey"],
-                           aws_session_token=chaves["SessionToken"], region_name=REGIAO)
-    return sessao.client("athena"), sessao.client("s3")
-
-
-def rodar(sql, athena=None, s3=None):
-    """Roda uma consulta no Athena e devolve um DataFrame (tudo como texto, menos as colunas
-    de NUMERICAS). Lê o CSV do resultado direto do S3: bem mais rápido que GetQueryResults
-    de 1.000 em 1.000 linhas."""
-    if athena is None or s3 is None:
-        athena, s3 = clientes()
-    id_consulta = athena.start_query_execution(
-        QueryString=sql,
-        QueryExecutionContext={"Database": BANCO},
-        ResultConfiguration={"OutputLocation": PASTA_RESULTADOS},
-        WorkGroup=WORKGROUP,
-    )["QueryExecutionId"]
-    while True:
-        execucao = athena.get_query_execution(QueryExecutionId=id_consulta)["QueryExecution"]
-        estado = execucao["Status"]["State"]
-        if estado == "SUCCEEDED":
-            break
-        if estado in ("FAILED", "CANCELLED"):
-            raise RuntimeError(f"Athena falhou: {execucao['Status'].get('StateChangeReason')}")
-        time.sleep(0.4)
-    local = execucao["ResultConfiguration"]["OutputLocation"]  # s3://bucket/pasta/id.csv
-    bucket, chave = local.removeprefix("s3://").split("/", 1)
-    corpo = s3.get_object(Bucket=bucket, Key=chave)["Body"].read()
-    tabela = pd.read_csv(io.BytesIO(corpo), dtype=str, keep_default_na=False, na_values=[""])
+    stepfunctions = stepfunctions or boto3.client("stepfunctions", region_name=REGIAO)
+    pedido = {"consulta": nome, **({"ean": ean} if ean else {})}
+    primeira = chamar(stepfunctions, pedido)
+    pedacos = [primeira["dados"]]
+    for parte in range(1, primeira["partes"]):
+        pedacos.append(chamar(stepfunctions, {**pedido, "id_consulta": primeira["id_consulta"], "parte": parte})["dados"])
+    csv = gzip.decompress(base64.b64decode("".join(pedacos)))
+    tabela = pd.read_csv(io.BytesIO(csv), dtype=str, keep_default_na=False, na_values=[""])
     for coluna in tabela.columns:
         if coluna in NUMERICAS:
             tabela[coluna] = pd.to_numeric(tabela[coluna], errors="coerce")
@@ -138,17 +79,19 @@ def rodar(sql, athena=None, s3=None):
 
 def carregar_tudo():
     """As consultas da base, todas ao mesmo tempo (cada uma leva alguns segundos)."""
-    athena, s3 = clientes()
+    import boto3
+
+    stepfunctions = boto3.client("stepfunctions", region_name=REGIAO)
     with ThreadPoolExecutor(max_workers=len(CONSULTAS)) as executor:
-        tarefas = {nome: executor.submit(rodar, sql, athena, s3) for nome, sql in CONSULTAS.items()}
+        tarefas = {nome: executor.submit(rodar, nome, None, stepfunctions) for nome in CONSULTAS}
         return {nome: tarefa.result() for nome, tarefa in tarefas.items()}
 
 
 def carregar_historico(ean):
     ean = chave_ean(ean)
-    if not ean:  # só dígitos entram no SQL
+    if not ean:
         return pd.DataFrame(columns=["farmacia", "dia", "preco_pix", "preco_cartao", "preco_sem_desconto"])
-    return rodar(CONSULTA_HISTORICO.format(ean=ean))
+    return rodar("historico", ean)
 
 
 # ---------- Arrumação ----------
