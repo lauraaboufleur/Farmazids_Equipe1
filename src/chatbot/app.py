@@ -148,8 +148,9 @@ LARGURA_POR_ROTULO = {"Farmazids": 90, "Menor concorrente": 145, "Farmácia": 13
                       "Diferença (%)": 110, "Acima": 70, "Abaixo": 70, "Queda": 70, "Unidades": 85,
                       "Unid. antes": 95, "Unid. agora": 95}
 
-# Colunas que servem ao texto, não à tabela (ex.: quantos produtos ficaram de fora por diferença acima de 200%).
-COLUNAS_OCULTAS = {"ignorados_acima_200"}
+# Colunas que servem ao texto, não à tabela (ex.: quantos produtos ficaram de fora por diferença acima de 200%;
+# a data da coleta dos atalhos, que vai para o rodapé).
+COLUNAS_OCULTAS = {"ignorados_acima_200", "coleta"}
 
 # Como sim/não aparece na tabela (ex.: coluna Estoque).
 MARCAS = {"true": "✓", "false": "✗"}
@@ -1502,15 +1503,32 @@ def audio_sob_demanda(chave, fala, destaque):
     return "polly"
 
 
-def rodape(mensagem, coleta=None, chave=None, fala="", origem=""):
-    """Hora da mensagem (ou, na comparação, a data da coleta), quanto tempo levou e,
+COLUNAS_DATA_COLETA = ("data_coleta", "coleta", "dt")
+
+
+def coleta_dos_dados(mensagem):
+    """"21/10": a data da coleta mais recente que veio nos dados (data_coleta; nos atalhos, coleta).
+    None nas respostas sem preço da coleta (vendas, teóricas)."""
+    colunas = [str(c).lower() for c in mensagem.get("colunas") or []]
+    indice = next((colunas.index(c) for c in COLUNAS_DATA_COLETA if c in colunas), None)
+    if indice is None:
+        return None
+    datas = [str(linha[indice])[:10] for linha in mensagem.get("linhas") or []
+             if indice < len(linha) and re.match(r"\d{4}-\d{2}-\d{2}", str(linha[indice] or ""))]
+    return f"{max(datas)[8:10]}/{max(datas)[5:7]}" if datas else None
+
+
+def rodape(mensagem, comparacao=False, chave=None, fala="", origem=""):
+    """Hora da mensagem, quanto tempo levou, a data da coleta (nas respostas com preço) e,
     nas respostas, o botão "Ouvir" (o assets/voz.js cuida dele). origem diz de onde vem
-    a voz ("polly", "sob-demanda" ou "navegador"), para a dica do botão e para conferir."""
-    texto = f"Coleta de {coleta}" if coleta else mensagem["hora"]
-    if mensagem.get("do_cache"):
-        texto += " · resposta salva"
-    elif mensagem.get("duracao") is not None:
+    a voz ("polly", "sob-demanda" ou "navegador"), para a dica do botão e para conferir.
+    Nada de "resposta salva": a resposta do cache aparece como qualquer outra."""
+    texto = mensagem["hora"]
+    if not mensagem.get("do_cache") and mensagem.get("duracao") is not None:
         texto += f" · respondido em {mensagem['duracao']:.0f} s"
+    coleta = coleta_dos_dados(mensagem) if mensagem.get("papel") == "assistant" else None
+    if coleta:
+        texto += f" · <span class='hora-coleta'>Coleta de {coleta}</span>"
     if chave is not None and fala:
         dica = "Voz do navegador" if origem == "navegador" else f"Voz: Amazon Polly ({POLLY_VOZ})"
         texto += (f" <button type='button' class='voz-ouvir' data-id='{chave}' data-origem='{origem}' "
@@ -1521,7 +1539,7 @@ def rodape(mensagem, coleta=None, chave=None, fala="", origem=""):
         # "Salvar como PDF" do navegador só com esta resposta (assets/voz.js e @media print).
         texto += (" <button type='button' class='pdf-botao' title='Salvar esta resposta em PDF' "
                   "aria-label='Salvar esta resposta em PDF'><span>PDF</span></button>")
-    return f"<div class='hora{' cmp-rodape' if coleta else ''}'>{texto}</div>"
+    return f"<div class='hora{' cmp-rodape' if comparacao else ''}'>{texto}</div>"
 
 
 # Largura do gráfico do PDF (área do desenho, sem os eixos): com os eixos e a legenda, fica abaixo da
@@ -1598,7 +1616,7 @@ def mostrar(mensagem, chave):
             if papel == "assistant" and chave != "inicio":
                 fala, destaque = fala_da_mensagem(mensagem, comparacao, chave)
                 origem = audio_sob_demanda(chave, fala, destaque)
-            st.html(rodape(mensagem, comparacao and comparacao["coleta"], chave, fala, origem))
+            st.html(rodape(mensagem, bool(comparacao), chave, fala, origem))
 
 
 def texto_espera(segundos):

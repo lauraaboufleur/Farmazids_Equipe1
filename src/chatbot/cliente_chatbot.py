@@ -8,8 +8,8 @@ Dois modos:
 Configuração por variáveis de ambiente (nada de credencial no código):
 - CHATBOT_MODO_SIMULADO = "1" (simulado) ou "0" (real)
 - CHATBOT_STATE_MACHINE_ARN = ARN da máquina Expressa
-- CHATBOT_CACHE_HORAS = por quantas horas, no máximo, guardar uma resposta (padrão 24; 0 desliga).
-  Antes disso, a resposta sai do cache assim que chega uma coleta nova (data lida do S3).
+- CHATBOT_CACHE_HORAS = "0" desliga o cache de respostas (qualquer outro valor: ligado; as regras de
+  validade estão em _expirou).
 - CHATBOT_BUCKET = bucket da coleta (padrão farmazids-t1-equipe1), para saber a data da última
 - CHATBOT_POLLY_SIMULADO = no modo simulado, "ok" (padrão: um áudio de teste) ou "falha"
   (finge que o Polly falhou, para testar a volta para a voz do navegador)
@@ -18,9 +18,10 @@ Dois cuidados com o tempo de resposta:
 - o cliente do boto3 é criado uma vez só e reaproveitado. Criar um novo a cada
   pergunta obriga a abrir outra conexão com a AWS, o que custa alguns décimos
   de segundo toda vez;
-- respostas certas ficam guardadas até a próxima coleta (ou 24 h). Se alguém
-  repetir a mesma pergunta, ela volta na hora, sem chamar Bedrock e Athena de novo.
-  Os dados só mudam quando chega uma coleta nova, então isso não deixa os dados velhos.
+- respostas certas ficam guardadas. Se alguém repetir a mesma pergunta, ela volta na
+  hora, sem chamar Bedrock e Athena de novo. As que dependem de preços valem até as 13:00
+  (São Paulo), depois da coleta do dia (~12 h), ou até a data da coleta mudar no S3 (quando
+  dá para ler); as só de vendas não expiram (a base de vendas é fixa).
 
 Modo rápido: a máquina só repassa pergunta, historico, colunas e linhas. Então o modo vai
 como último item do histórico ({"modo": "rapida"}); a redigir-resposta o lê e monta a
@@ -40,13 +41,21 @@ import time
 import unicodedata
 import wave
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta
 from functools import lru_cache
+from zoneinfo import ZoneInfo
 
 REGIAO = "us-east-2"
 ARN_MAQUINA = os.environ.get("CHATBOT_STATE_MACHINE_ARN", "")
 MODO_SIMULADO = os.environ.get("CHATBOT_MODO_SIMULADO", "1") == "1"
 TAMANHO_MAXIMO_PERGUNTA = 500
-CACHE_SEGUNDOS = int(os.environ.get("CHATBOT_CACHE_HORAS", "24")) * 3600
+CACHE_LIGADO = os.environ.get("CHATBOT_CACHE_HORAS", "24").strip() != "0"
+# As respostas com preço vencem todo dia a esta hora (São Paulo), depois da coleta (~12 h). Não depende
+# de ler a data da coleta no S3 (que pede s3:ListBucket).
+FUSO = ZoneInfo("America/Sao_Paulo")
+HORA_CORTE = 13
+# Tabelas que não mudam (a base de vendas é fixa): SQL só com elas não expira.
+TABELAS_FIXAS = {"vw_vendas", "resumo_vendas_mes"}
 BUCKET = os.environ.get("CHATBOT_BUCKET", "farmazids-t1-equipe1")
 COLETA_SEGUNDOS = 600  # de quanto em quanto tempo conferir no S3 se chegou coleta nova
 CACHE_MAXIMO = 200  # quantas perguntas guardar, no máximo
@@ -97,7 +106,7 @@ _coleta = {"data": None, "conferida": 0.0}
 def ultima_coleta():
     """Data ("2026-10-21") da coleta mais recente no S3 (pastas processed/<farmácia>/dt=...),
     conferida no máximo a cada COLETA_SEGUNDOS. None se não der para ler (sem permissão
-    s3:ListBucket, por exemplo): aí o cache vale só pelas 24 h."""
+    s3:ListBucket, por exemplo): aí as respostas com preço vencem só às 13:00."""
     if MODO_SIMULADO:
         return "2026-10-21"
     if time.time() - _coleta["conferida"] < COLETA_SEGUNDOS:
@@ -127,30 +136,48 @@ _aquecendo = {}  # chave do cache -> threading.Event (execução em andamento)
 # As perguntas dos atalhos (normalizadas): o SQL delas é fixo, não depende da conversa. Então vão sem o
 # histórico, e o mesmo clique acha a resposta no cache em qualquer ponto da conversa.
 _perguntas_fixas = set()
-_aquecimento = {"coleta": None, "feito": False, "conferido": 0.0, "rodando": False}
+_aquecimento = {"estado": None, "feito": False, "conferido": 0.0, "rodando": False, "relogio": False,
+               "perguntas": []}
 _trava_aquecer = threading.Lock()
 
 
 def preaquecer(perguntas):
     """Chamada a cada execução da tela; não espera nada: no máximo dispara uma thread, que confere a data
-    da coleta (a cada COLETA_SEGUNDOS) e roda os atalhos que faltam no cache."""
+    da coleta (a cada COLETA_SEGUNDOS) e roda os atalhos que faltam no cache. Na primeira vez, liga
+    também o relógio que aquece de novo às 13:00, quando as respostas com preço vencem."""
     _perguntas_fixas.update(_normalizar(p) for p in perguntas)
-    if CACHE_SEGUNDOS <= 0:
+    if not CACHE_LIGADO:
         return
     with _trava_aquecer:
+        _aquecimento["perguntas"] = list(perguntas)[:PREAQUECER_MAXIMO]
+        if not _aquecimento["relogio"]:
+            _aquecimento["relogio"] = True
+            threading.Thread(target=_relogio, daemon=True, name="relogio-13h").start()
         if _aquecimento["rodando"] or (_aquecimento["feito"]
                                        and time.time() - _aquecimento["conferido"] < COLETA_SEGUNDOS):
             return
         _aquecimento.update(rodando=True, conferido=time.time())
-    threading.Thread(target=_aquecer, args=(list(perguntas)[:PREAQUECER_MAXIMO],), daemon=True,
+    threading.Thread(target=_aquecer, args=(_aquecimento["perguntas"],), daemon=True,
                      name="preaquecer-atalhos").start()
+
+
+def _relogio():
+    """Enquanto o app estiver no ar: logo depois de cada 13:00 (São Paulo), aquece os atalhos de novo."""
+    while True:
+        alvo = _proximo_corte(time.time()) + 5
+        while (falta := alvo - time.time()) > 0:
+            time.sleep(min(falta, 900))  # acorda de vez em quando: aguenta ajuste de relógio
+        print("[chatbot] 13:00: as respostas com preço venceram; pré-aquecendo os atalhos")
+        _aquecimento["conferido"] = 0.0
+        preaquecer(_aquecimento["perguntas"])
 
 
 def _aquecer(perguntas):
     try:
         coleta = ultima_coleta()
-        if _aquecimento["feito"] and coleta == _aquecimento["coleta"]:
-            return  # mesma coleta: já aquecido
+        estado = (coleta, _ultimo_corte(time.time()))
+        if _aquecimento["feito"] and estado == _aquecimento["estado"]:
+            return  # mesma coleta e mesmo dia de preços: já aquecido
         pendentes = []
         with _trava_aquecer:
             for pergunta in perguntas:
@@ -175,7 +202,7 @@ def _aquecer(perguntas):
                 certos = sum(executor.map(rodar, pendentes))
             print(f"[chatbot] pré-aquecimento: {certos}/{len(pendentes)} certo(s) em "
                   f"{time.perf_counter() - inicio:.1f} s")
-        _aquecimento.update(coleta=coleta, feito=True)
+        _aquecimento.update(estado=estado, feito=True)
     except Exception as erro:  # o pré-aquecimento nunca pode derrubar o app
         print(f"[chatbot] pré-aquecimento falhou: {erro!r}")
     finally:
@@ -205,17 +232,46 @@ def _rapida_do_cache(pergunta, historico):
     return completa
 
 
+def _ultimo_corte(momento):
+    """Timestamp das 13:00 (São Paulo) mais recentes até `momento` (timestamp)."""
+    quando = datetime.fromtimestamp(momento, FUSO)
+    corte = quando.replace(hour=HORA_CORTE, minute=0, second=0, microsecond=0)
+    if quando < corte:
+        corte -= timedelta(days=1)
+    return corte.timestamp()
+
+
+def _proximo_corte(momento):
+    """Timestamp das primeiras 13:00 (São Paulo) depois de `momento`."""
+    corte = datetime.fromtimestamp(_ultimo_corte(momento), FUSO) + timedelta(days=1)
+    return corte.replace(hour=HORA_CORTE).timestamp()  # replace: segura a hora se mudar o fuso
+
+
+def depende_de_precos(resultado):
+    """Só não depende de preços a resposta cujo SQL lê só as tabelas fixas de vendas. Sem SQL (teórica,
+    sem dados) ou com qualquer view de preços: depende (na dúvida, vence às 13:00)."""
+    tabelas = set(re.findall(r"\b(vw_\w+|resumo_vendas_mes)\b", (resultado.get("sql") or "").lower()))
+    return not tabelas or not tabelas <= TABELAS_FIXAS
+
+
+def _expirou(momento, coleta_da_resposta, precos, coleta_agora):
+    """Respostas só de vendas não expiram. As com preço vencem às 13:00 (São Paulo) seguintes a quando
+    foram guardadas e, se a data da coleta pode ser lida no S3, também quando ela muda."""
+    if not precos:
+        return False
+    return time.time() >= _proximo_corte(momento) or bool(coleta_agora and coleta_agora != coleta_da_resposta)
+
+
 def _buscar_no_cache(chave):
-    if CACHE_SEGUNDOS <= 0:
+    if not CACHE_LIGADO:
         return None
     coleta = ultima_coleta()
     with _trava_cache:
         guardado = _cache.get(chave)
         if guardado is None:
             return None
-        momento, coleta_da_resposta, resultado = guardado
-        # Sai do cache depois de 24 h ou quando chega uma coleta nova.
-        if time.time() - momento > CACHE_SEGUNDOS or (coleta and coleta != coleta_da_resposta):
+        momento, coleta_da_resposta, precos, resultado = guardado
+        if _expirou(momento, coleta_da_resposta, precos, coleta):
             del _cache[chave]
             return None
         return dict(resultado)
@@ -223,14 +279,14 @@ def _buscar_no_cache(chave):
 
 def _guardar_no_cache(chave, resultado):
     # Só guarda resposta certa: erro não pode ficar "preso" no cache.
-    if CACHE_SEGUNDOS <= 0 or not resultado["ok"]:
+    if not CACHE_LIGADO or not resultado["ok"]:
         return
     coleta = ultima_coleta()
     with _trava_cache:
         if len(_cache) >= CACHE_MAXIMO:
             mais_antiga = min(_cache, key=lambda k: _cache[k][0])
             del _cache[mais_antiga]
-        _cache[chave] = (time.time(), coleta, dict(resultado))
+        _cache[chave] = (time.time(), coleta, depende_de_precos(resultado), dict(resultado))
 
 
 @lru_cache(maxsize=1)
@@ -311,8 +367,14 @@ def _perguntar_simulado(pergunta, historico):
     atalho = _ATALHOS_SIMULADOS.get(_sem_acento(pergunta))
     if atalho:
         resposta, colunas, linhas = atalho
-        return {"ok": True, "resposta": resposta, "sql": "WITH fz AS (...), conc AS (...) ... (SQL pronto do atalho)",
-                "colunas": colunas, "linhas": linhas, "tipo": "dados", "grafico": None}
+        if "farmazids_rs" in colunas:
+            # Com preço: a data da coleta vem junto (a tela a mostra no rodapé), e o SQL lê as views de preço.
+            colunas, linhas = colunas + ["coleta"], [l + ["2026-10-21"] for l in linhas]
+            sql = "WITH fz AS (... FROM vw_medicamentos ...), conc AS (... FROM vw_precos_unitarios ...) ... LIMIT 20"
+        else:
+            sql = "WITH ultima AS (...) SELECT farmacia, mes, sum(unidades) ... FROM resumo_vendas_mes ... LIMIT 50"
+        return {"ok": True, "resposta": resposta, "sql": sql, "colunas": colunas, "linhas": linhas,
+                "tipo": "dados", "grafico": None}
     contexto = f" (com {len(historico)} troca(s) anterior(es) no histórico)" if historico else ""
     pediu_grafico = "gráfico" in pergunta.lower() or "grafico" in pergunta.lower()
     if any(p in pergunta.lower() for p in ("vend", "fatur", "arrecad")):

@@ -3,7 +3,8 @@
 -- Rode uma consulta por vez no console do Athena e compare com a tabela do chatbot.
 -- Os de vendas leem o resumo_vendas_mes (crie antes com resumo_vendas_mes.sql).
 -- Preços: preço de comparação da vw_precos_unitarios (só a coleta mais recente), mesmo EAN sem os
--- zeros à esquerda; o preço da Farmazids vem da vw_medicamentos.
+-- zeros à esquerda; o preço da Farmazids vem da vw_medicamentos. A coluna coleta (data da
+-- coleta dos preços) vai para o rodapé da resposta, não para a tabela.
 -- "Últimos 3 meses completos": se a última venda da Farmazids não cai no último dia do mês, esse mês
 -- (incompleto) fica de fora e contam os 3 anteriores.
 
@@ -15,14 +16,14 @@ WITH fz AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_
   FROM t1_eq1_farmazids.vw_medicamentos
   WHERE ean IS NOT NULL
   GROUP BY 1),
-conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia
+conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia, max(date(data_coleta)) AS coleta
   FROM t1_eq1_farmazids.vw_precos_unitarios
   WHERE ean IS NOT NULL AND preco_comparacao > 0
   GROUP BY 1),
-base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, round(f.preco - c.menor, 2) AS diferenca, round(100.0 * (f.preco - c.menor) / c.menor, 1) AS pct, 100.0 * (f.preco - c.menor) / c.menor AS grandeza, count_if(100.0 * (f.preco - c.menor) / c.menor > 200) OVER () AS ignorados_acima_200
+base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, c.coleta, round(f.preco - c.menor, 2) AS diferenca, round(100.0 * (f.preco - c.menor) / c.menor, 1) AS pct, 100.0 * (f.preco - c.menor) / c.menor AS grandeza, count_if(100.0 * (f.preco - c.menor) / c.menor > 200) OVER () AS ignorados_acima_200
   FROM fz f JOIN conc c ON c.ean_n = f.ean_n
   WHERE f.preco > 0 AND f.preco <= 500 AND f.preco > c.menor)
-SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS acima_pct, ignorados_acima_200
+SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS acima_pct, ignorados_acima_200, coleta
   FROM base
   WHERE grandeza <= 200
   ORDER BY pct DESC, diferenca DESC
@@ -36,14 +37,14 @@ WITH fz AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_
   FROM t1_eq1_farmazids.vw_medicamentos
   WHERE ean IS NOT NULL
   GROUP BY 1),
-conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia
+conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia, max(date(data_coleta)) AS coleta
   FROM t1_eq1_farmazids.vw_precos_unitarios
   WHERE ean IS NOT NULL AND preco_comparacao > 0
   GROUP BY 1),
-base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, round(c.menor - f.preco, 2) AS diferenca, round(100.0 * (c.menor - f.preco) / c.menor, 1) AS pct, 100.0 * (c.menor - f.preco) / f.preco AS grandeza, count_if(100.0 * (c.menor - f.preco) / f.preco > 200) OVER () AS ignorados_acima_200
+base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, c.coleta, round(c.menor - f.preco, 2) AS diferenca, round(100.0 * (c.menor - f.preco) / c.menor, 1) AS pct, 100.0 * (c.menor - f.preco) / f.preco AS grandeza, count_if(100.0 * (c.menor - f.preco) / f.preco > 200) OVER () AS ignorados_acima_200
   FROM fz f JOIN conc c ON c.ean_n = f.ean_n
   WHERE f.preco > 0 AND f.preco <= 500 AND f.preco < c.menor)
-SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS abaixo_pct, ignorados_acima_200
+SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS abaixo_pct, ignorados_acima_200, coleta
   FROM base
   WHERE grandeza <= 200
   ORDER BY pct DESC, diferenca DESC
@@ -69,12 +70,12 @@ fz AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, mi
   WHERE ean IS NOT NULL AND regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') IN (SELECT ean_n
   FROM mais)
   GROUP BY 1),
-conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia
+conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia, max(date(data_coleta)) AS coleta
   FROM t1_eq1_farmazids.vw_precos_unitarios
   WHERE ean IS NOT NULL AND preco_comparacao > 0 AND regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') IN (SELECT ean_n
   FROM mais)
   GROUP BY 1)
-SELECT COALESCE(f.produto, c.nome, 'Código ' || m.ean_n || ' sem cadastro') AS produto, m.unidades, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, round(100.0 * (f.preco - c.menor) / c.menor, 1) AS diferenca_pct
+SELECT COALESCE(f.produto, c.nome, 'Código ' || m.ean_n || ' sem cadastro') AS produto, m.unidades, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, round(100.0 * (f.preco - c.menor) / c.menor, 1) AS diferenca_pct, c.coleta
   FROM mais m LEFT JOIN fz f ON f.ean_n = m.ean_n LEFT JOIN conc c ON c.ean_n = m.ean_n
   ORDER BY m.unidades DESC, m.ean_n
   LIMIT 10;
@@ -114,12 +115,12 @@ fz AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, mi
   WHERE ean IS NOT NULL AND regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') IN (SELECT ean_n
   FROM queda)
   GROUP BY 1),
-conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia
+conc AS (SELECT regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, min_by(farmacia, preco_comparacao) AS farmacia, max(date(data_coleta)) AS coleta
   FROM t1_eq1_farmazids.vw_precos_unitarios
   WHERE ean IS NOT NULL AND preco_comparacao > 0 AND regexp_replace(trim(CAST(ean AS varchar)), '^0+', '') IN (SELECT ean_n
   FROM queda)
   GROUP BY 1)
-SELECT COALESCE(f.produto, c.nome, 'Código ' || q.ean_n || ' sem cadastro') AS produto, q.antes AS unidades_antes, q.agora AS unidades_agora, q.queda_pct, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia
+SELECT COALESCE(f.produto, c.nome, 'Código ' || q.ean_n || ' sem cadastro') AS produto, q.antes AS unidades_antes, q.agora AS unidades_agora, q.queda_pct, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, c.coleta
   FROM queda q LEFT JOIN fz f ON f.ean_n = q.ean_n LEFT JOIN conc c ON c.ean_n = q.ean_n
   ORDER BY q.queda_pct DESC, q.antes DESC
   LIMIT 15;

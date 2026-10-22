@@ -107,7 +107,8 @@ LIMITE_DIFERENCA_PCT = 200       # diferença acima disso é provável erro de d
 def ctes_farmazids_concorrencia(so_os_de=None):
     """fz: preço da Farmazids por EAN, direto da vw_medicamentos (as mesmas colunas da
     vw_precos_unitarios_farmazids, sem as extrações por regex, que aqui não servem). conc: o menor preço de
-    comparação por EAN na vw_precos_unitarios (que já é só a coleta mais recente). Com so_os_de (nome
+    comparação por EAN na vw_precos_unitarios (que já é só a coleta mais recente) e a data dessa coleta
+    (coluna coleta: a tela a mostra no rodapé e a esconde da tabela). Com so_os_de (nome
     de um CTE com ean_n), lê só esses EANs: os atalhos de vendas cruzam os preços só com o resultado."""
     filtro = f" AND {ean_sem_zeros('ean')} IN (SELECT ean_n FROM {so_os_de})" if so_os_de else ""
     return (
@@ -115,7 +116,7 @@ def ctes_farmazids_concorrencia(so_os_de=None):
         "min(TRY_CAST(preco_farmazids AS double)) AS preco FROM vw_medicamentos "
         f"WHERE ean IS NOT NULL{filtro} GROUP BY 1), "
         f"conc AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, "
-        "min_by(farmacia, preco_comparacao) AS farmacia FROM vw_precos_unitarios "
+        "min_by(farmacia, preco_comparacao) AS farmacia, max(date(data_coleta)) AS coleta FROM vw_precos_unitarios "
         f"WHERE ean IS NOT NULL AND preco_comparacao > 0{filtro} GROUP BY 1)"
     )
 
@@ -134,12 +135,12 @@ def sql_farmazids_x_concorrentes(mais_cara=True):
         pct, grandeza, coluna = "100.0 * (c.menor - f.preco) / c.menor", "100.0 * (c.menor - f.preco) / f.preco", "abaixo_pct"
     return (
         f"WITH {ctes_farmazids_concorrencia()}, "
-        "base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, "
+        "base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, c.coleta, "
         f"round({diferenca}, 2) AS diferenca, round({pct}, 1) AS pct, {grandeza} AS grandeza, "
         f"count_if({grandeza} > {LIMITE_DIFERENCA_PCT}) OVER () AS ignorados_acima_200 "
         "FROM fz f JOIN conc c ON c.ean_n = f.ean_n "
         f"WHERE f.preco > 0 AND f.preco <= {LIMITE_PRECO_FARMAZIDS} AND {comparacao}) "
-        f"SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS {coluna}, ignorados_acima_200 "
+        f"SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS {coluna}, ignorados_acima_200, coleta "
         f"FROM base WHERE grandeza <= {LIMITE_DIFERENCA_PCT} ORDER BY pct DESC, diferenca DESC LIMIT 20"
     )
 
@@ -173,7 +174,7 @@ def sql_mais_vendidos_x_concorrencia():
         f"{ctes_farmazids_concorrencia('mais')} "
         "SELECT COALESCE(f.produto, c.nome, 'Código ' || m.ean_n || ' sem cadastro') AS produto, m.unidades, "
         "f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, "
-        "round(100.0 * (f.preco - c.menor) / c.menor, 1) AS diferenca_pct "
+        "round(100.0 * (f.preco - c.menor) / c.menor, 1) AS diferenca_pct, c.coleta "
         "FROM mais m LEFT JOIN fz f ON f.ean_n = m.ean_n LEFT JOIN conc c ON c.ean_n = m.ean_n "
         "ORDER BY m.unidades DESC, m.ean_n LIMIT 10"
     )
@@ -205,7 +206,7 @@ def sql_produtos_em_queda():
         f"{ctes_farmazids_concorrencia('queda')} "
         "SELECT COALESCE(f.produto, c.nome, 'Código ' || q.ean_n || ' sem cadastro') AS produto, "
         "q.antes AS unidades_antes, q.agora AS unidades_agora, q.queda_pct, f.preco AS farmazids_rs, "
-        "c.menor AS menor_concorrente_rs, c.farmacia "
+        "c.menor AS menor_concorrente_rs, c.farmacia, c.coleta "
         "FROM queda q LEFT JOIN fz f ON f.ean_n = q.ean_n LEFT JOIN conc c ON c.ean_n = q.ean_n "
         "ORDER BY q.queda_pct DESC, q.antes DESC LIMIT 15"
     )
