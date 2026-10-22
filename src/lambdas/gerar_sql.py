@@ -60,7 +60,7 @@ DICAS_DADOS = (
     "- vw_precos_unitarios_farmazids: a tabela de preços da Farmazids (ean, nome, preco_farmazids, as colunas "
     "lidas do nome e preco_farmazids_por_unidade), sem farmácia, data nem estoque. vw_medicamentos: o mesmo "
     "catálogo, sem as colunas lidas do nome.\n"
-    "- vw_vendas: uma linha por venda (id_venda, farmacia, ean_gtin, data_venda, quantidade_vendida), sem "
+    "- vw_vendas: uma linha por venda (id_venda, farmacia, ean, data_venda, quantidade_vendida), sem "
     "preço, nome nem SKU (ver a regra de vendas). Só tem Farmazids, FarmaPonte e VeraCruz.\n"
     f"- As views se ligam pelo código de barras sem zeros à esquerda: {ean_sem_zeros('ean')}.\n"
     "- farmacia: filtre com LOWER e as variações: 'farmaponte'; 'veracruz'; 'farmazids'; Drogaria São Paulo "
@@ -104,14 +104,19 @@ LIMITE_PRECO_FARMAZIDS = 500     # só produtos da Farmazids até R$ 500
 LIMITE_DIFERENCA_PCT = 200       # diferença acima disso é provável erro de dado: fica fora (e é contada)
 
 
-def ctes_farmazids_concorrencia():
+def ctes_farmazids_concorrencia(so_os_de=None):
+    """fz: preço da Farmazids por EAN, direto da vw_medicamentos (as mesmas colunas da
+    vw_precos_unitarios_farmazids, sem as extrações por regex, que aqui não servem). conc: o menor preço de
+    comparação por EAN na vw_precos_unitarios (que já é só a coleta mais recente). Com so_os_de (nome
+    de um CTE com ean_n), lê só esses EANs: os atalhos de vendas cruzam os preços só com o resultado."""
+    filtro = f" AND {ean_sem_zeros('ean')} IN (SELECT ean_n FROM {so_os_de})" if so_os_de else ""
     return (
         f"fz AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(nome) AS produto, "
-        "min(TRY_CAST(preco_farmazids AS double)) AS preco FROM vw_precos_unitarios_farmazids "
-        "WHERE ean IS NOT NULL GROUP BY 1), "
+        "min(TRY_CAST(preco_farmazids AS double)) AS preco FROM vw_medicamentos "
+        f"WHERE ean IS NOT NULL{filtro} GROUP BY 1), "
         f"conc AS (SELECT {ean_sem_zeros('ean')} AS ean_n, min(nome) AS nome, min(preco_comparacao) AS menor, "
         "min_by(farmacia, preco_comparacao) AS farmacia FROM vw_precos_unitarios "
-        "WHERE ean IS NOT NULL AND preco_comparacao > 0 GROUP BY 1)"
+        f"WHERE ean IS NOT NULL AND preco_comparacao > 0{filtro} GROUP BY 1)"
     )
 
 
@@ -119,7 +124,8 @@ def sql_farmazids_x_concorrentes(mais_cara=True):
     """Atalhos "Onde estamos mais caros/baratos": produto, preço Farmazids (até R$ 500), menor concorrente,
     farmácia, diferença em R$ e em % (acima: sobre o concorrente; abaixo: quanto a Farmazids fica abaixo
     dele). Diferença acima de 200% (o preço maior passa de 3 vezes o menor) fica fora e é contada em
-    ignorados_acima_200. As 20 maiores diferenças em %."""
+    ignorados_acima_200 (por janela, numa passada só: um subselect na base leria as views de novo).
+    As 20 maiores diferenças em %."""
     if mais_cara:
         comparacao, diferenca = "f.preco > c.menor", "f.preco - c.menor"
         pct, grandeza, coluna = "100.0 * (f.preco - c.menor) / c.menor", "100.0 * (f.preco - c.menor) / c.menor", "acima_pct"
@@ -129,62 +135,79 @@ def sql_farmazids_x_concorrentes(mais_cara=True):
     return (
         f"WITH {ctes_farmazids_concorrencia()}, "
         "base AS (SELECT f.produto, f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, "
-        f"round({diferenca}, 2) AS diferenca, round({pct}, 1) AS pct, {grandeza} AS grandeza "
+        f"round({diferenca}, 2) AS diferenca, round({pct}, 1) AS pct, {grandeza} AS grandeza, "
+        f"count_if({grandeza} > {LIMITE_DIFERENCA_PCT}) OVER () AS ignorados_acima_200 "
         "FROM fz f JOIN conc c ON c.ean_n = f.ean_n "
         f"WHERE f.preco > 0 AND f.preco <= {LIMITE_PRECO_FARMAZIDS} AND {comparacao}) "
-        f"SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS {coluna}, "
-        f"(SELECT count(*) FROM base WHERE grandeza > {LIMITE_DIFERENCA_PCT}) AS ignorados_acima_200 "
-        f"FROM base WHERE grandeza <= {LIMITE_DIFERENCA_PCT} ORDER BY pct DESC LIMIT 20"
+        f"SELECT produto, farmazids_rs, menor_concorrente_rs, farmacia, diferenca, pct AS {coluna}, ignorados_acima_200 "
+        f"FROM base WHERE grandeza <= {LIMITE_DIFERENCA_PCT} ORDER BY pct DESC, diferenca DESC LIMIT 20"
+    )
+
+
+# Vendas dos atalhos: o resumo_vendas_mes (CTAS em Parquet, criado uma vez por
+# infra/athena/resumo_vendas_mes.sql; a base de vendas é fixa), com unidades e número de vendas por
+# farmácia, EAN sem zeros à esquerda (ean_n) e mês. Bem menor que a vw_vendas: agrega primeiro e só
+# depois cruza com os preços.
+RESUMO_VENDAS = "resumo_vendas_mes"
+
+
+def ctes_fim_farmazids():
+    """fim.mes: o último mês completo de vendas da Farmazids (o mês da última venda, se ela cai no último
+    dia do mês; senão, o anterior), para "os últimos 3 meses" não compararem um mês pela metade."""
+    return (
+        f"ultima AS (SELECT max(ultimo_dia) AS dia FROM {RESUMO_VENDAS} WHERE LOWER(farmacia) = 'farmazids'), "
+        "fim AS (SELECT CASE WHEN dia = last_day_of_month(dia) THEN date_trunc('month', dia) "
+        "ELSE date_add('month', -1, date_trunc('month', dia)) END AS mes FROM ultima)"
     )
 
 
 def sql_mais_vendidos_x_concorrencia():
-    """Os 10 mais vendidos da Farmazids nos últimos 3 meses (até a última data_venda dela), com o preço da
-    Farmazids, o menor preço concorrente, a farmácia e a diferença em %."""
+    """Os 10 mais vendidos da Farmazids nos últimos 3 meses completos, com o preço da Farmazids, o menor
+    preço concorrente, a farmácia e a diferença em %."""
     return (
-        "WITH ultima AS (SELECT max(date(data_venda)) AS dia FROM vw_vendas WHERE LOWER(farmacia) = 'farmazids'), "
-        f"vendas AS (SELECT {ean_sem_zeros('ean_gtin')} AS ean_n, sum(TRY_CAST(quantidade_vendida AS double)) AS unidades "
-        "FROM vw_vendas, ultima WHERE LOWER(farmacia) = 'farmazids' "
-        "AND date(data_venda) > date_add('month', -3, ultima.dia) GROUP BY 1), "
-        f"{ctes_farmazids_concorrencia()} "
-        "SELECT COALESCE(f.produto, c.nome, 'Código ' || v.ean_n || ' sem cadastro') AS produto, v.unidades, "
+        f"WITH {ctes_fim_farmazids()}, "
+        f"mais AS (SELECT r.ean_n, sum(r.unidades) AS unidades FROM {RESUMO_VENDAS} r, fim "
+        "WHERE LOWER(r.farmacia) = 'farmazids' AND r.ean_n IS NOT NULL AND r.ean_n <> '' "
+        "AND r.mes > date_add('month', -3, fim.mes) AND r.mes <= fim.mes "
+        "GROUP BY 1 ORDER BY 2 DESC, 1 LIMIT 10), "
+        f"{ctes_farmazids_concorrencia('mais')} "
+        "SELECT COALESCE(f.produto, c.nome, 'Código ' || m.ean_n || ' sem cadastro') AS produto, m.unidades, "
         "f.preco AS farmazids_rs, c.menor AS menor_concorrente_rs, c.farmacia, "
         "round(100.0 * (f.preco - c.menor) / c.menor, 1) AS diferenca_pct "
-        "FROM vendas v LEFT JOIN fz f ON f.ean_n = v.ean_n LEFT JOIN conc c ON c.ean_n = v.ean_n "
-        "ORDER BY v.unidades DESC LIMIT 10"
+        "FROM mais m LEFT JOIN fz f ON f.ean_n = m.ean_n LEFT JOIN conc c ON c.ean_n = m.ean_n "
+        "ORDER BY m.unidades DESC, m.ean_n LIMIT 10"
     )
 
 
 def sql_vendas_por_mes():
     """Unidades vendidas por farmácia (as da base de vendas) e mês, nos últimos 6 meses do calendário
-    até a última data_venda (o mês dela conta, mesmo incompleto). Sem valor estimado."""
+    até o mês da última venda (ele conta, mesmo incompleto). Sem valor estimado."""
     return (
-        "WITH ultima AS (SELECT max(date(data_venda)) AS dia FROM vw_vendas) "
-        "SELECT farmacia, date_format(date(data_venda), '%Y-%m') AS mes, "
-        "sum(TRY_CAST(quantidade_vendida AS double)) AS unidades "
-        "FROM vw_vendas, ultima WHERE date(data_venda) >= date_add('month', -5, date_trunc('month', ultima.dia)) "
+        f"WITH ultima AS (SELECT max(mes) AS mes FROM {RESUMO_VENDAS}) "
+        "SELECT r.farmacia, date_format(r.mes, '%Y-%m') AS mes, sum(r.unidades) AS unidades "
+        f"FROM {RESUMO_VENDAS} r, ultima WHERE r.mes >= date_add('month', -5, ultima.mes) "
         "GROUP BY 1, 2 ORDER BY 2, 1 LIMIT 50"
     )
 
 
 def sql_produtos_em_queda():
-    """Produtos da Farmazids com a maior queda de unidades: últimos 3 meses x os 3 anteriores (até a
-    última data_venda dela), só com pelo menos 10 unidades antes; com o menor preço concorrente ao lado."""
+    """Produtos da Farmazids com a maior queda de unidades: últimos 3 meses completos x os 3 anteriores,
+    só com pelo menos 10 unidades antes; as 15 maiores quedas, e só então o menor preço concorrente."""
     return (
-        "WITH ultima AS (SELECT max(date(data_venda)) AS dia FROM vw_vendas WHERE LOWER(farmacia) = 'farmazids'), "
-        f"itens AS (SELECT {ean_sem_zeros('ean_gtin')} AS ean_n, TRY_CAST(quantidade_vendida AS double) AS q, "
-        "date(data_venda) AS d FROM vw_vendas WHERE LOWER(farmacia) = 'farmazids'), "
-        "periodos AS (SELECT ean_n, "
-        "COALESCE(sum(CASE WHEN d > date_add('month', -3, ultima.dia) THEN q END), 0) AS agora, "
-        "COALESCE(sum(CASE WHEN d <= date_add('month', -3, ultima.dia) AND d > date_add('month', -6, ultima.dia) "
-        "THEN q END), 0) AS antes FROM itens, ultima GROUP BY ean_n), "
-        f"{ctes_farmazids_concorrencia()} "
-        "SELECT COALESCE(f.produto, c.nome, 'Código ' || p.ean_n || ' sem cadastro') AS produto, "
-        "p.antes AS unidades_antes, p.agora AS unidades_agora, "
-        "round(100.0 * (p.antes - p.agora) / p.antes, 1) AS queda_pct, f.preco AS farmazids_rs, "
+        f"WITH {ctes_fim_farmazids()}, "
+        "periodos AS (SELECT r.ean_n, "
+        "COALESCE(sum(CASE WHEN r.mes > date_add('month', -3, fim.mes) THEN r.unidades END), 0) AS agora, "
+        "COALESCE(sum(CASE WHEN r.mes <= date_add('month', -3, fim.mes) THEN r.unidades END), 0) AS antes "
+        f"FROM {RESUMO_VENDAS} r, fim WHERE LOWER(r.farmacia) = 'farmazids' AND r.ean_n IS NOT NULL "
+        "AND r.ean_n <> '' AND r.mes > date_add('month', -6, fim.mes) AND r.mes <= fim.mes GROUP BY 1), "
+        "queda AS (SELECT ean_n, antes, agora, round(100.0 * (antes - agora) / antes, 1) AS queda_pct "
+        "FROM periodos WHERE antes >= 10 AND agora < antes ORDER BY 4 DESC, 2 DESC LIMIT 15), "
+        f"{ctes_farmazids_concorrencia('queda')} "
+        "SELECT COALESCE(f.produto, c.nome, 'Código ' || q.ean_n || ' sem cadastro') AS produto, "
+        "q.antes AS unidades_antes, q.agora AS unidades_agora, q.queda_pct, f.preco AS farmazids_rs, "
         "c.menor AS menor_concorrente_rs, c.farmacia "
-        "FROM periodos p LEFT JOIN fz f ON f.ean_n = p.ean_n LEFT JOIN conc c ON c.ean_n = p.ean_n "
-        "WHERE p.antes >= 10 AND p.agora < p.antes ORDER BY queda_pct DESC LIMIT 15"
+        "FROM queda q LEFT JOIN fz f ON f.ean_n = q.ean_n LEFT JOIN conc c ON c.ean_n = q.ean_n "
+        "ORDER BY q.queda_pct DESC, q.antes DESC LIMIT 15"
     )
 
 
@@ -210,7 +233,7 @@ def sql_vendas_modelo():
     mediana das outras; senão, Farmazids). Exemplo com filtro de remédio (dipirona)."""
     farmacia_n = "lower(regexp_replace(farmacia, '[^A-Za-z]', ''))"
     return (
-        f"WITH vendas AS (SELECT farmacia, {farmacia_n} AS farmacia_n, {ean_sem_zeros('ean_gtin')} AS ean, "
+        f"WITH vendas AS (SELECT farmacia, {farmacia_n} AS farmacia_n, {ean_sem_zeros('ean')} AS ean, "
         "TRY_CAST(quantidade_vendida AS double) AS quantidade, date(data_venda) AS data_venda FROM vw_vendas "
         "WHERE date(data_venda) BETWEEN DATE '2026-01-01' AND DATE '2026-01-31' AND LOWER(farmacia) = 'farmaponte'), "
         f"coleta AS (SELECT {farmacia_n} AS farmacia_n, {ean_sem_zeros('ean')} AS ean, min(nome) AS nome, "
@@ -267,7 +290,7 @@ REGRA_VENDAS = (
     "vendas_codigo_sem_cadastro. Sem filtro de remédio, elas entram no total: count(*) AS total_vendas, "
     "count_if(preco IS NOT NULL) AS vendas_com_preco, count_if(preco IS NULL) AS vendas_sem_preco, "
     "sum(quantidade) AS unidades, round(sum(quantidade * preco), 2) AS valor_estimado, sem HAVING e sem "
-    "vendas_codigo_sem_cadastro. Para listar produtos vendidos, agrupe por nome e traga ean_gtin. A vw_vendas "
+    "vendas_codigo_sem_cadastro. Para listar produtos vendidos, agrupe por nome e traga ean. A vw_vendas "
     "só tem Farmazids, FarmaPonte e VeraCruz: vendas só de outra farmácia (inclusive numa continuação, como "
     "'e na São João?') -> CANNOT_ANSWER; farmácias de dentro e de fora -> filtre só as de dentro. Troque os "
     "filtros do modelo pelos da pergunta:\n" + sql_vendas_modelo() + "\n"

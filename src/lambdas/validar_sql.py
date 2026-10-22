@@ -2,8 +2,10 @@ import re
 import time
 
 # Regras de validação do SQL gerado pelo Bedrock (slide 6 da aula de IA).
+# resumo_vendas_mes: o resumo das vendas por farmácia, EAN e mês (CTAS, infra/athena/resumo_vendas_mes.sql),
+# usado pelos SQL prontos dos atalhos de vendas.
 TABELAS_PERMITIDAS = {"vw_precos_concorrentes", "vw_vendas", "vw_medicamentos",
-                      "vw_precos_unitarios", "vw_precos_unitarios_farmazids"}
+                      "vw_precos_unitarios", "vw_precos_unitarios_farmazids", "resumo_vendas_mes"}
 LIMITE_MAXIMO = 50
 PALAVRAS_PROIBIDAS = [
     "insert", "update", "delete", "drop", "alter", "create", "merge",

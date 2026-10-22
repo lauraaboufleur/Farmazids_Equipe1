@@ -24,7 +24,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from cliente_chatbot import MODO_SIMULADO, perguntar, sintetizar, ultima_coleta
+from cliente_chatbot import MODO_SIMULADO, perguntar, preaquecer, sintetizar, ultima_coleta
 from dashboard import mostrar_dashboard
 
 ASSETS = Path(__file__).parent / "assets"
@@ -1712,6 +1712,8 @@ if "modo_rapido" not in st.session_state:
     st.session_state.modo_rapido = False  # ⚡ na barra de pergunta: aceso = resposta rápida (lembrado na sessão)
 
 aplicar_estilo()
+# Os atalhos rodam uma vez em segundo plano (início do app e coleta nova): o clique já sai do cache.
+preaquecer([p for _, itens in ATALHOS for _, p in itens if isinstance(p, str)])
 pedir_login()
 instalar_scripts()
 

@@ -39,6 +39,7 @@ import threading
 import time
 import unicodedata
 import wave
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 REGIAO = "us-east-2"
@@ -114,6 +115,94 @@ def ultima_coleta():
         print(f"[chatbot] não li a data da coleta no S3: {erro}")
         _coleta["data"] = None
     return _coleta["data"]
+
+
+# ---------- Pré-aquecimento dos atalhos ----------
+# Quando o app inicia (e quando chega coleta nova), os atalhos da coluna lateral rodam uma vez em
+# segundo plano, no modo completo: quem clicar já recebe do cache (o modo rápido sai da mesma resposta,
+# ver _rapida_do_cache). No máximo PREAQUECER_MAXIMO execuções por vez, sem repetir as que já estão no
+# cache. Se alguém clicar num atalho que ainda está aquecendo, espera essa execução em vez de abrir outra.
+PREAQUECER_MAXIMO = 5
+_aquecendo = {}  # chave do cache -> threading.Event (execução em andamento)
+# As perguntas dos atalhos (normalizadas): o SQL delas é fixo, não depende da conversa. Então vão sem o
+# histórico, e o mesmo clique acha a resposta no cache em qualquer ponto da conversa.
+_perguntas_fixas = set()
+_aquecimento = {"coleta": None, "feito": False, "conferido": 0.0, "rodando": False}
+_trava_aquecer = threading.Lock()
+
+
+def preaquecer(perguntas):
+    """Chamada a cada execução da tela; não espera nada: no máximo dispara uma thread, que confere a data
+    da coleta (a cada COLETA_SEGUNDOS) e roda os atalhos que faltam no cache."""
+    _perguntas_fixas.update(_normalizar(p) for p in perguntas)
+    if CACHE_SEGUNDOS <= 0:
+        return
+    with _trava_aquecer:
+        if _aquecimento["rodando"] or (_aquecimento["feito"]
+                                       and time.time() - _aquecimento["conferido"] < COLETA_SEGUNDOS):
+            return
+        _aquecimento.update(rodando=True, conferido=time.time())
+    threading.Thread(target=_aquecer, args=(list(perguntas)[:PREAQUECER_MAXIMO],), daemon=True,
+                     name="preaquecer-atalhos").start()
+
+
+def _aquecer(perguntas):
+    try:
+        coleta = ultima_coleta()
+        if _aquecimento["feito"] and coleta == _aquecimento["coleta"]:
+            return  # mesma coleta: já aquecido
+        pendentes = []
+        with _trava_aquecer:
+            for pergunta in perguntas:
+                chave = _chave_cache(pergunta, [], "completa")
+                if chave not in _aquecendo and _buscar_no_cache(chave) is None:
+                    _aquecendo[chave] = threading.Event()
+                    pendentes.append((pergunta, chave))
+        inicio = time.perf_counter()
+        print(f"[chatbot] pré-aquecimento: {len(pendentes)} atalho(s), coleta {coleta}")
+
+        def rodar(item):
+            pergunta, chave = item
+            try:
+                resultado = _executar(pergunta, [], "completa")
+                _guardar_no_cache(chave, resultado)
+                return resultado["ok"]
+            finally:
+                _aquecendo.pop(chave).set()
+
+        if pendentes:
+            with ThreadPoolExecutor(max_workers=len(pendentes)) as executor:
+                certos = sum(executor.map(rodar, pendentes))
+            print(f"[chatbot] pré-aquecimento: {certos}/{len(pendentes)} certo(s) em "
+                  f"{time.perf_counter() - inicio:.1f} s")
+        _aquecimento.update(coleta=coleta, feito=True)
+    except Exception as erro:  # o pré-aquecimento nunca pode derrubar o app
+        print(f"[chatbot] pré-aquecimento falhou: {erro!r}")
+    finally:
+        _aquecimento["rodando"] = False
+
+
+def _esperar_aquecimento(chave, segundos=60):
+    """Se essa pergunta está sendo aquecida agora, espera ela terminar (no máximo `segundos`)."""
+    evento = _aquecendo.get(chave)
+    if evento is not None:
+        evento.wait(segundos)
+
+
+def _rapida_do_cache(pergunta, historico):
+    """Modo rápido de uma pergunta que já tem a resposta completa no cache: a frase sai das mesmas
+    colunas e linhas (como a redigir-resposta faz no modo rápido), sem chamar a AWS."""
+    chave = _chave_cache(pergunta, historico, "completa")
+    _esperar_aquecimento(chave)
+    completa = _buscar_no_cache(chave)
+    if not completa or completa.get("tipo") != "dados" or not completa.get("linhas"):
+        return None
+    try:
+        completa.update(resposta=_redigir_rapido()(completa["colunas"], completa["linhas"]), grafico=None, fala=None)
+    except Exception as erro:
+        print(f"[chatbot] frase rápida local falhou: {erro!r}")
+        return None
+    return completa
 
 
 def _buscar_no_cache(chave):
@@ -246,8 +335,8 @@ def _perguntar_simulado(pergunta, historico):
                        ("7899095200059", "VeraCruz", 5)]
             return {"ok": True, "resposta": "Estes são os códigos de barras sem cadastro nas vendas: 3 códigos, "
                     "em 22 vendas. Sem cadastro, não dá para saber qual é o produto nem estimar o valor.",
-                    "sql": "WITH vendas AS (...) ... WHERE preco IS NULL GROUP BY ean_gtin, farmacia ... LIMIT 50",
-                    "colunas": ["ean_gtin", "farmacia", "total_vendas", "vendas_com_preco", "vendas_sem_preco",
+                    "sql": "WITH vendas AS (...) ... WHERE preco IS NULL GROUP BY ean, farmacia ... LIMIT 50",
+                    "colunas": ["ean", "farmacia", "total_vendas", "vendas_com_preco", "vendas_sem_preco",
                                 "valor_estimado"],
                     "linhas": [[c, f, str(n), "0", str(n), None] for c, f, n in codigos],
                     "tipo": "dados", "grafico": None}
@@ -477,6 +566,19 @@ def _perguntar_aws(pergunta, historico):
     }
 
 
+def _executar(pergunta, historico, modo):
+    """Uma execução de verdade (Step Functions; no modo simulado, a resposta de teste)."""
+    if MODO_SIMULADO:
+        resultado = _perguntar_simulado(pergunta, historico)
+        if modo == "rapida" and resultado.get("tipo") == "dados":
+            # Como a redigir-resposta no modo rápido: a frase sai dos dados, sem Bedrock.
+            resultado.update(resposta=_redigir_rapido()(resultado["colunas"], resultado["linhas"]),
+                             grafico=None, fala=None)
+        return resultado
+    # O modo rápido vai como último item do histórico (a máquina só repassa o histórico).
+    return _perguntar_aws(pergunta, historico + ([{"modo": "rapida"}] if modo == "rapida" else []))
+
+
 def perguntar(pergunta, historico=None, modo="completa"):
     """Recebe a pergunta, o histórico (lista de {"pergunta", "resposta", "sql"},
     da troca mais antiga para a mais recente; vazio na primeira pergunta) e o modo
@@ -484,28 +586,23 @@ def perguntar(pergunta, historico=None, modo="completa"):
     ok, resposta, sql, colunas, linhas, tipo, grafico, duracao (segundos) e do_cache."""
     inicio = time.perf_counter()
     pergunta = (pergunta or "").strip()
-    historico = historico or []
+    historico = [] if _normalizar(pergunta) in _perguntas_fixas else (historico or [])
     if not pergunta:
         resultado = _falha("Escreva uma pergunta.")
     elif len(pergunta) > TAMANHO_MAXIMO_PERGUNTA:
         resultado = _falha(f"A pergunta pode ter no máximo {TAMANHO_MAXIMO_PERGUNTA} caracteres.")
     else:
         chave = _chave_cache(pergunta, historico, modo)
+        _esperar_aquecimento(chave)
         guardado = _buscar_no_cache(chave)
+        if guardado is None and modo == "rapida":
+            guardado = _rapida_do_cache(pergunta, historico)
         if guardado is not None:
             guardado["do_cache"] = True
             guardado["duracao"] = time.perf_counter() - inicio
+            print(f"[chatbot] {guardado['duracao']:.1f} s | do cache | modo={modo} | {pergunta[:60]}")
             return guardado
-        # O modo rápido vai como último item do histórico (a máquina só repassa o histórico).
-        envio = historico + ([{"modo": "rapida"}] if modo == "rapida" else [])
-        if MODO_SIMULADO:
-            resultado = _perguntar_simulado(pergunta, historico)
-            if modo == "rapida" and resultado.get("tipo") == "dados":
-                # Como a redigir-resposta no modo rápido: a frase sai dos dados, sem Bedrock.
-                resultado.update(resposta=_redigir_rapido()(resultado["colunas"], resultado["linhas"]),
-                                 grafico=None, fala=None)
-        else:
-            resultado = _perguntar_aws(pergunta, envio)
+        resultado = _executar(pergunta, historico, modo)
         _guardar_no_cache(chave, resultado)
 
     resultado["do_cache"] = False
